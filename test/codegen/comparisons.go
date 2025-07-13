@@ -661,14 +661,20 @@ func equalVarString8(a string) bool {
 }
 
 func equalVarStringNoSpill(a,b string) bool {
-	s := string("ZZZZZZZZZ")
+	s := string("123456789012345678901234567890123")
 	// arm64:".*memequal"
-	memeq1 := a[:9] == s
+	memeq1 := a[:33] == s
 	// arm64:-".*"
-	memeq2 := s == a[:9]
+	memeq2 := s == a[:33]
 	// arm64:-"MOVB\tR0,.*SP",".*memequal"
-	memeq3 := s == b[:9]
+	memeq3 := s == b[:33]
 	return memeq1 && memeq2 && memeq3
+}
+
+func equalVarString17(a string) bool {
+	b := string("12345678901234567")
+	// arm64:-".*memequal","MOVD\t[$]55,","MOVD\t[$]3906085646303834169,","MOVD\t[$]4050765991979987505,"
+	return a[:17] == b
 }
 
 func cmpToCmn(a, b, c, d int) int {
