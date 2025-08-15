@@ -10,6 +10,14 @@ func rewriteValueARM64latelower(v *Value) bool {
 		return rewriteValueARM64latelower_OpARM64ADDconst(v)
 	case OpARM64ANDconst:
 		return rewriteValueARM64latelower_OpARM64ANDconst(v)
+	case OpARM64CCMN:
+		return rewriteValueARM64latelower_OpARM64CCMN(v)
+	case OpARM64CCMNW:
+		return rewriteValueARM64latelower_OpARM64CCMNW(v)
+	case OpARM64CCMP:
+		return rewriteValueARM64latelower_OpARM64CCMP(v)
+	case OpARM64CCMPW:
+		return rewriteValueARM64latelower_OpARM64CCMPW(v)
 	case OpARM64CMNWconst:
 		return rewriteValueARM64latelower_OpARM64CMNWconst(v)
 	case OpARM64CMNconst:
@@ -110,6 +118,106 @@ func rewriteValueARM64latelower_OpARM64ANDconst(v *Value) bool {
 		v0 := b.NewValue0(v.Pos, OpARM64MOVDconst, typ.UInt64)
 		v0.AuxInt = int64ToAuxInt(c)
 		v.AddArg2(x, v0)
+		return true
+	}
+	return false
+}
+func rewriteValueARM64latelower_OpARM64CCMN(v *Value) bool {
+	v_2 := v.Args[2]
+	v_1 := v.Args[1]
+	v_0 := v.Args[0]
+	// match: (CCMN [condParams] x (MOVDconst [imm]) conds)
+	// cond: validImmARM64CCMP(imm)
+	// result: (CCMNconst [setImmToParams(condParams, imm)] x conds)
+	for {
+		condParams := auxIntToArm64ConditionalParams(v.AuxInt)
+		x := v_0
+		if v_1.Op != OpARM64MOVDconst {
+			break
+		}
+		imm := auxIntToInt64(v_1.AuxInt)
+		conds := v_2
+		if !(validImmARM64CCMP(imm)) {
+			break
+		}
+		v.reset(OpARM64CCMNconst)
+		v.AuxInt = arm64ConditionalParamsToAuxInt(setImmToParams(condParams, imm))
+		v.AddArg2(x, conds)
+		return true
+	}
+	return false
+}
+func rewriteValueARM64latelower_OpARM64CCMNW(v *Value) bool {
+	v_2 := v.Args[2]
+	v_1 := v.Args[1]
+	v_0 := v.Args[0]
+	// match: (CCMNW [condParams] x (MOVDconst [imm]) conds)
+	// cond: validImmARM64CCMP(imm)
+	// result: (CCMNWconst [setImmToParams(condParams, imm)] x conds)
+	for {
+		condParams := auxIntToArm64ConditionalParams(v.AuxInt)
+		x := v_0
+		if v_1.Op != OpARM64MOVDconst {
+			break
+		}
+		imm := auxIntToInt64(v_1.AuxInt)
+		conds := v_2
+		if !(validImmARM64CCMP(imm)) {
+			break
+		}
+		v.reset(OpARM64CCMNWconst)
+		v.AuxInt = arm64ConditionalParamsToAuxInt(setImmToParams(condParams, imm))
+		v.AddArg2(x, conds)
+		return true
+	}
+	return false
+}
+func rewriteValueARM64latelower_OpARM64CCMP(v *Value) bool {
+	v_2 := v.Args[2]
+	v_1 := v.Args[1]
+	v_0 := v.Args[0]
+	// match: (CCMP [condParams] x (MOVDconst [imm]) conds)
+	// cond: validImmARM64CCMP(imm)
+	// result: (CCMPconst [setImmToParams(condParams, imm)] x conds)
+	for {
+		condParams := auxIntToArm64ConditionalParams(v.AuxInt)
+		x := v_0
+		if v_1.Op != OpARM64MOVDconst {
+			break
+		}
+		imm := auxIntToInt64(v_1.AuxInt)
+		conds := v_2
+		if !(validImmARM64CCMP(imm)) {
+			break
+		}
+		v.reset(OpARM64CCMPconst)
+		v.AuxInt = arm64ConditionalParamsToAuxInt(setImmToParams(condParams, imm))
+		v.AddArg2(x, conds)
+		return true
+	}
+	return false
+}
+func rewriteValueARM64latelower_OpARM64CCMPW(v *Value) bool {
+	v_2 := v.Args[2]
+	v_1 := v.Args[1]
+	v_0 := v.Args[0]
+	// match: (CCMPW [condParams] x (MOVDconst [imm]) conds)
+	// cond: validImmARM64CCMP(imm)
+	// result: (CCMPWconst [setImmToParams(condParams, imm)] x conds)
+	for {
+		condParams := auxIntToArm64ConditionalParams(v.AuxInt)
+		x := v_0
+		if v_1.Op != OpARM64MOVDconst {
+			break
+		}
+		imm := auxIntToInt64(v_1.AuxInt)
+		conds := v_2
+		if !(validImmARM64CCMP(imm)) {
+			break
+		}
+		v.reset(OpARM64CCMPWconst)
+		v.AuxInt = arm64ConditionalParamsToAuxInt(setImmToParams(condParams, imm))
+		v.AddArg2(x, conds)
 		return true
 	}
 	return false

@@ -1049,6 +1049,27 @@ func ssaGenValue(s *ssagen.State, v *ssa.Value) {
 		p.From.Offset = int64(condCode)
 		p.To.Type = obj.TYPE_REG
 		p.To.Reg = v.Reg()
+	case ssa.OpARM64CCMP,
+		ssa.OpARM64CCMN,
+		ssa.OpARM64CCMPconst,
+		ssa.OpARM64CCMNconst,
+		ssa.OpARM64CCMPW,
+		ssa.OpARM64CCMNW,
+		ssa.OpARM64CCMPWconst,
+		ssa.OpARM64CCMNWconst:
+		p := s.Prog(v.Op.Asm())
+		p.From.Type = obj.TYPE_SPECIAL
+		params := v.AuxArm64ConditionalParams()
+		condCode := condBits[params.Cond()]
+		p.From.Offset = int64(condCode)
+		constValue, ok := params.ConstValue()
+		if ok {
+			p.AddRestSourceConst(constValue)
+		} else {
+			p.AddRestSourceReg(v.Args[1].Reg())
+		}
+		p.To.Type = obj.TYPE_CONST
+		p.To.Offset = params.Nzcv()
 	case ssa.OpARM64DUFFZERO:
 		// runtime.duffzero expects start address in R20
 		p := s.Prog(obj.ADUFFZERO)

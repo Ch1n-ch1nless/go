@@ -157,12 +157,14 @@ func init() {
 		gp11           = regInfo{inputs: []regMask{gpg}, outputs: []regMask{gp}}
 		gp11sp         = regInfo{inputs: []regMask{gpspg}, outputs: []regMask{gp}}
 		gp1flags       = regInfo{inputs: []regMask{gpg}}
+		gp1flagsflags  = regInfo{inputs: []regMask{gpg}}
 		gp1flags1      = regInfo{inputs: []regMask{gpg}, outputs: []regMask{gp}}
 		gp11flags      = regInfo{inputs: []regMask{gpg}, outputs: []regMask{gp, 0}}
 		gp21           = regInfo{inputs: []regMask{gpg, gpg}, outputs: []regMask{gp}}
 		gp21nog        = regInfo{inputs: []regMask{gp, gp}, outputs: []regMask{gp}}
 		gp21flags      = regInfo{inputs: []regMask{gp, gp}, outputs: []regMask{gp, 0}}
 		gp2flags       = regInfo{inputs: []regMask{gpg, gpg}}
+		gp2flagsflags  = regInfo{inputs: []regMask{gpg, gpg}}
 		gp2flags1      = regInfo{inputs: []regMask{gp, gp}, outputs: []regMask{gp}}
 		gp2flags1flags = regInfo{inputs: []regMask{gp, gp, 0}, outputs: []regMask{gp, 0}}
 		gp2load        = regInfo{inputs: []regMask{gpspsbg, gpg}, outputs: []regMask{gp}}
@@ -508,6 +510,17 @@ func init() {
 		{name: "CSINV", argLength: 3, reg: gp2flags1, asm: "CSINV", aux: "CCop"}, // auxint(flags) ? arg0 : ^arg1
 		{name: "CSNEG", argLength: 3, reg: gp2flags1, asm: "CSNEG", aux: "CCop"}, // auxint(flags) ? arg0 : -arg1
 		{name: "CSETM", argLength: 1, reg: readflags, asm: "CSETM", aux: "CCop"}, // auxint(flags) ? -1 : 0
+
+		// conditional comparison instructions
+		{name: "CCMP", argLength: 3, reg: gp2flagsflags, asm: "CCMP", aux: "ARM64ConditionalParams", typ: "Flags"},
+		{name: "CCMN", argLength: 3, reg: gp2flagsflags, asm: "CCMN", aux: "ARM64ConditionalParams", typ: "Flags"},
+		{name: "CCMPconst", argLength: 2, reg: gp1flagsflags, asm: "CCMP", aux: "ARM64ConditionalParams", typ: "Flags"},
+		{name: "CCMNconst", argLength: 2, reg: gp1flagsflags, asm: "CCMN", aux: "ARM64ConditionalParams", typ: "Flags"},
+
+		{name: "CCMPW", argLength: 3, reg: gp2flagsflags, asm: "CCMPW", aux: "ARM64ConditionalParams", typ: "Flags"},
+		{name: "CCMNW", argLength: 3, reg: gp2flagsflags, asm: "CCMNW", aux: "ARM64ConditionalParams", typ: "Flags"},
+		{name: "CCMPWconst", argLength: 2, reg: gp1flagsflags, asm: "CCMPW", aux: "ARM64ConditionalParams", typ: "Flags"},
+		{name: "CCMNWconst", argLength: 2, reg: gp1flagsflags, asm: "CCMNW", aux: "ARM64ConditionalParams", typ: "Flags"},
 
 		// function calls
 		{name: "CALLstatic", argLength: -1, reg: regInfo{clobbers: callerSave}, aux: "CallOff", clobberFlags: true, call: true},                                               // call static function aux.(*obj.LSym).  last arg=mem, auxint=argsize, returns mem

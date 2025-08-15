@@ -366,11 +366,12 @@ const (
 	auxCallOff                // aux is a *ssa.AuxCall, AuxInt is int64 param (in+out) size
 
 	// architecture specific aux types
-	auxARM64BitField     // aux is an arm64 bitfield lsb and width packed into auxInt
-	auxS390XRotateParams // aux is a s390x rotate parameters object encoding start bit, end bit and rotate amount
-	auxS390XCCMask       // aux is a s390x 4-bit condition code mask
-	auxS390XCCMaskInt8   // aux is a s390x 4-bit condition code mask, auxInt is an int8 immediate
-	auxS390XCCMaskUint8  // aux is a s390x 4-bit condition code mask, auxInt is a uint8 immediate
+	auxARM64BitField          // aux is an arm64 bitfield lsb and width packed into auxInt
+	auxARM64ConditionalParams // aux is a 32-bit unsigned integer, in which the values of cond, nzcv and optionally constant are encoded
+	auxS390XRotateParams      // aux is a s390x rotate parameters object encoding start bit, end bit and rotate amount
+	auxS390XCCMask            // aux is a s390x 4-bit condition code mask
+	auxS390XCCMaskInt8        // aux is a s390x 4-bit condition code mask, auxInt is an int8 immediate
+	auxS390XCCMaskUint8       // aux is a s390x 4-bit condition code mask, auxInt is a uint8 immediate
 )
 
 // A SymEffect describes the effect that an SSA Value has on the variable
@@ -528,3 +529,6 @@ func boundsABI(b int64) int {
 // width+lsb<64 for 64-bit variant, width+lsb<32 for 32-bit variant.
 // the meaning of width and lsb are instruction-dependent.
 type arm64BitField int16
+
+// arm64ConditionalParams is the GO type of ARM64ConditionalParams auxInt.
+type arm64ConditionalParams uint32
