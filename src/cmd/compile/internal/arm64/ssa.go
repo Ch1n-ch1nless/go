@@ -1059,6 +1059,7 @@ func ssaGenValue(s *ssagen.State, v *ssa.Value) {
 		ssa.OpARM64CCMNWconst:
 		p := s.Prog(v.Op.Asm())
 		p.From.Type = obj.TYPE_SPECIAL
+		p.Reg = v.Args[0].Reg()
 		params := v.AuxArm64ConditionalParams()
 		condCode := condBits[params.Cond()]
 		p.From.Offset = int64(condCode)
