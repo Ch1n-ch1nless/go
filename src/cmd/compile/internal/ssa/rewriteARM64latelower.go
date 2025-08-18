@@ -18,10 +18,18 @@ func rewriteValueARM64latelower(v *Value) bool {
 		return rewriteValueARM64latelower_OpARM64CCMP(v)
 	case OpARM64CCMPW:
 		return rewriteValueARM64latelower_OpARM64CCMPW(v)
+	case OpARM64CMN:
+		return rewriteValueARM64latelower_OpARM64CMN(v)
+	case OpARM64CMNW:
+		return rewriteValueARM64latelower_OpARM64CMNW(v)
 	case OpARM64CMNWconst:
 		return rewriteValueARM64latelower_OpARM64CMNWconst(v)
 	case OpARM64CMNconst:
 		return rewriteValueARM64latelower_OpARM64CMNconst(v)
+	case OpARM64CMP:
+		return rewriteValueARM64latelower_OpARM64CMP(v)
+	case OpARM64CMPW:
+		return rewriteValueARM64latelower_OpARM64CMPW(v)
 	case OpARM64CMPWconst:
 		return rewriteValueARM64latelower_OpARM64CMPWconst(v)
 	case OpARM64CMPconst:
@@ -222,6 +230,56 @@ func rewriteValueARM64latelower_OpARM64CCMPW(v *Value) bool {
 	}
 	return false
 }
+func rewriteValueARM64latelower_OpARM64CMN(v *Value) bool {
+	v_1 := v.Args[1]
+	v_0 := v.Args[0]
+	// match: (CMN x (MOVDconst [c]))
+	// cond: isARM64addcon(c)
+	// result: (CMNconst [c] x)
+	for {
+		for _i0 := 0; _i0 <= 1; _i0, v_0, v_1 = _i0+1, v_1, v_0 {
+			x := v_0
+			if v_1.Op != OpARM64MOVDconst {
+				continue
+			}
+			c := auxIntToInt64(v_1.AuxInt)
+			if !(isARM64addcon(c)) {
+				continue
+			}
+			v.reset(OpARM64CMNconst)
+			v.AuxInt = int64ToAuxInt(c)
+			v.AddArg(x)
+			return true
+		}
+		break
+	}
+	return false
+}
+func rewriteValueARM64latelower_OpARM64CMNW(v *Value) bool {
+	v_1 := v.Args[1]
+	v_0 := v.Args[0]
+	// match: (CMNW x (MOVDconst [c]))
+	// cond: isARM64addcon(c)
+	// result: (CMNWconst [int32(c)] x)
+	for {
+		for _i0 := 0; _i0 <= 1; _i0, v_0, v_1 = _i0+1, v_1, v_0 {
+			x := v_0
+			if v_1.Op != OpARM64MOVDconst {
+				continue
+			}
+			c := auxIntToInt64(v_1.AuxInt)
+			if !(isARM64addcon(c)) {
+				continue
+			}
+			v.reset(OpARM64CMNWconst)
+			v.AuxInt = int32ToAuxInt(int32(c))
+			v.AddArg(x)
+			return true
+		}
+		break
+	}
+	return false
+}
 func rewriteValueARM64latelower_OpARM64CMNWconst(v *Value) bool {
 	v_0 := v.Args[0]
 	b := v.Block
@@ -260,6 +318,50 @@ func rewriteValueARM64latelower_OpARM64CMNconst(v *Value) bool {
 		v0 := b.NewValue0(v.Pos, OpARM64MOVDconst, typ.UInt64)
 		v0.AuxInt = int64ToAuxInt(c)
 		v.AddArg2(x, v0)
+		return true
+	}
+	return false
+}
+func rewriteValueARM64latelower_OpARM64CMP(v *Value) bool {
+	v_1 := v.Args[1]
+	v_0 := v.Args[0]
+	// match: (CMP x (MOVDconst [c]))
+	// cond: isARM64addcon(c)
+	// result: (CMPconst [c] x)
+	for {
+		x := v_0
+		if v_1.Op != OpARM64MOVDconst {
+			break
+		}
+		c := auxIntToInt64(v_1.AuxInt)
+		if !(isARM64addcon(c)) {
+			break
+		}
+		v.reset(OpARM64CMPconst)
+		v.AuxInt = int64ToAuxInt(c)
+		v.AddArg(x)
+		return true
+	}
+	return false
+}
+func rewriteValueARM64latelower_OpARM64CMPW(v *Value) bool {
+	v_1 := v.Args[1]
+	v_0 := v.Args[0]
+	// match: (CMPW x (MOVDconst [c]))
+	// cond: isARM64addcon(c)
+	// result: (CMPWconst [int32(c)] x)
+	for {
+		x := v_0
+		if v_1.Op != OpARM64MOVDconst {
+			break
+		}
+		c := auxIntToInt64(v_1.AuxInt)
+		if !(isARM64addcon(c)) {
+			break
+		}
+		v.reset(OpARM64CMPWconst)
+		v.AuxInt = int32ToAuxInt(int32(c))
+		v.AddArg(x)
 		return true
 	}
 	return false
