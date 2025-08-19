@@ -86,6 +86,15 @@ func canValuesBeMoved(b *Block) bool {
 			}
 		}
 	}
+
+	for _, v := range b.Controls[0].Args {
+		for _, a := range v.Args {
+			if a.Type.IsMemory() {
+				return false
+			}
+		}
+	}
+
 	return true
 }
 
