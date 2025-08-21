@@ -487,6 +487,7 @@ var passes = [...]pass{
 		disabled: !buildcfg.Experiment.PreemptibleLoops}, // insert resched checks in loops.
 	{name: "lower", fn: lower, required: true},
 	{name: "addressing modes", fn: addressingModes, required: false},
+	{name: "merge conditional branches", fn: mergeConditionalBranches, required: true},
 	{name: "late lower", fn: lateLower, required: true},
 	{name: "pair", fn: pair},
 	{name: "lowered deadcode for cse", fn: deadcode}, // deadcode immediately before CSE avoids CSE making dead values live again

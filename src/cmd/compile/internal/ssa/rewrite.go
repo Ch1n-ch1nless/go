@@ -1945,6 +1945,18 @@ func (condParams arm64ConditionalParams) ConstValue() (int64, bool) {
 	return int64(value) & 0x1f, true
 }
 
+func validImmARM64CCMP(imm int64) bool {
+	if imm&0x1f == imm {
+		return true
+	}
+	return false
+}
+
+func setImmToParams(condParams arm64ConditionalParams, imm int64) arm64ConditionalParams {
+	return arm64ConditionalParamsAuxIntWithValue(condParams.Cond(), uint8(condParams.Nzcv()), uint8(imm))
+}
+
+
 // registerizable reports whether t is a primitive type that fits in
 // a register. It assumes float64 values will always fit into registers
 // even if that isn't strictly true.

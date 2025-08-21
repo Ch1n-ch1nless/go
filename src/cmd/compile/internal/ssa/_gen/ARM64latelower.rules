@@ -18,6 +18,16 @@
 (CMNconst [c] x) && !isARM64addcon(c)  => (CMN x (MOVDconst [c]))
 (CMNWconst [c] x) && !isARM64addcon(int64(c))  => (CMNW x (MOVDconst [int64(c)]))
 
+(CMP x (MOVDconst [c])) && isARM64addcon(c) => (CMPconst [c] x)
+(CMN x (MOVDconst [c])) && isARM64addcon(c) => (CMNconst [c] x)
+(CMPW x (MOVDconst [c])) && isARM64addcon(c) => (CMPWconst [int32(c)] x)
+(CMNW x (MOVDconst [c])) && isARM64addcon(c) => (CMNWconst [int32(c)] x)
+
+(CCMP [condParams] x (MOVDconst [imm]) conds) && validImmARM64CCMP(imm) => (CCMPconst [setImmToParams(condParams, imm)] x conds)
+(CCMN [condParams] x (MOVDconst [imm]) conds) && validImmARM64CCMP(imm) => (CCMNconst [setImmToParams(condParams, imm)] x conds)
+(CCMPW [condParams] x (MOVDconst [imm]) conds) && validImmARM64CCMP(imm) => (CCMPWconst [setImmToParams(condParams, imm)] x conds)
+(CCMNW [condParams] x (MOVDconst [imm]) conds) && validImmARM64CCMP(imm) => (CCMNWconst [setImmToParams(condParams, imm)] x conds)
+
 (ADDSconstflags [c] x) && !isARM64addcon(c)  => (ADDSflags x (MOVDconst [c]))
 
 // These rules remove unneeded sign/zero extensions.
