@@ -669,6 +669,9 @@ func auxIntToValAndOff(i int64) ValAndOff {
 func auxIntToArm64BitField(i int64) arm64BitField {
 	return arm64BitField(i)
 }
+func auxIntToArm64ConditionalParams(i int64) arm64ConditionalParams {
+	return arm64ConditionalParams(i)
+}
 func auxIntToFlagConstant(x int64) flagConstant {
 	return flagConstant(x)
 }
@@ -708,6 +711,9 @@ func valAndOffToAuxInt(v ValAndOff) int64 {
 	return int64(v)
 }
 func arm64BitFieldToAuxInt(v arm64BitField) int64 {
+	return int64(v)
+}
+func arm64ConditionalParamsToAuxInt(v arm64ConditionalParams) int64 {
 	return int64(v)
 }
 func flagConstantToAuxInt(x flagConstant) int64 {
@@ -1897,6 +1903,46 @@ func arm64BFWidth(mask, rshift int64) int64 {
 		panic("ARM64 BF mask is zero")
 	}
 	return nto(shiftedMask)
+}
+
+func arm64ConditionalParamsAuxInt(cond Op, nzcv uint8) arm64ConditionalParams {
+	if cond < OpARM64Equal || cond > OpARM64GreaterEqualU {
+		panic("Wrong conditional operation")
+	}
+	if nzcv&0x0f != nzcv {
+		panic("Wrong value of NZCV flag")
+	}
+	return arm64ConditionalParams(uint32(cond) | uint32(nzcv)<<12)
+}
+
+func arm64ConditionalParamsAuxIntWithValue(cond Op, nzcv uint8, value uint8) arm64ConditionalParams {
+	if value&0x1f != value {
+		panic("Wrong value of constant")
+	}
+	temp := uint32(arm64ConditionalParamsAuxInt(cond, nzcv))
+	return arm64ConditionalParams(temp | uint32(value)<<16 | 1<<31)
+}
+
+func (condParams arm64ConditionalParams) Cond() Op {
+	condCode := condParams & 0x0fff
+	return Op(condCode)
+}
+
+func (condParams arm64ConditionalParams) Nzcv() int64 {
+	nzcv := condParams >> 12
+	return int64(nzcv&0x0f)
+}
+
+func (condParams arm64ConditionalParams) hasConstValue() bool {
+	return uint32(condParams)>>31 == 1
+}
+
+func (condParams arm64ConditionalParams) ConstValue() (int64, bool) {
+	if !condParams.hasConstValue() {
+		return -1, false
+	}
+	value := condParams >> 16
+	return int64(value) & 0x1f, true
 }
 
 // registerizable reports whether t is a primitive type that fits in

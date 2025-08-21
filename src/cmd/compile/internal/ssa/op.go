@@ -376,6 +376,7 @@ const (
 
 	// architecture specific aux types
 	auxARM64BitField     // aux is an arm64 bitfield lsb and width packed into auxInt
+	auxARM64ConditionalParams // aux is a 32-bit unsigned integer, in which the values of cond, nzcv and optionally constant are encoded
 	auxS390XRotateParams // aux is a s390x rotate parameters object encoding start bit, end bit and rotate amount
 	auxS390XCCMask       // aux is a s390x 4-bit condition code mask
 	auxS390XCCMaskInt8   // aux is a s390x 4-bit condition code mask, auxInt is an int8 immediate
@@ -534,3 +535,20 @@ func (b BoundsKind) Code() (rtabi.BoundsErrorCode, bool) {
 // width+lsb<64 for 64-bit variant, width+lsb<32 for 32-bit variant.
 // the meaning of width and lsb are instruction-dependent.
 type arm64BitField int16
+
+// arm64ConditionalParams is the GO type of ARM64ConditionalParams auxInt.
+// 32-bit value structure:
+//
+//   bit31   bits30-21    bits20-16    bits15-12   bits11-0
+//  +------+------------+------------+-----------+-----------+
+//  | ind  |  reserved  |   const    |   nzcv    |   cond    |
+//  +------+------------+------------+-----------+-----------+
+//
+// Bit layout:
+//   - cond:   bits[0:11]   (12 bits)  // Condition field
+//   - nzcv:   bits[12:15]  (4 bits)   // NZCV flags
+//   - const:  bits[16:20]  (5 bits)   // Constant value
+//   - ind:    bits 31      (1 bit)    // Constant encoding indicator
+//
+// Reserved bits: [21-30] (must be zero)
+type arm64ConditionalParams uint32
