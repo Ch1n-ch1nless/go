@@ -1,16 +1,10 @@
 package ssa
 
-import (
-	"os"
-)
-
-func skipEmptyPlains(f *Func) {
-	blocks := f.Blocks
-	for _, block := range blocks {
-		if isEmptyPlainBlock(block) {
-			deleteEmptyPlainBlock(block)
-		}
+func skipEmptyPlainBlocks(b *Block) *Block {
+	for isEmptyPlainBlock(b) {
+		b = b.Succs[0].Block()
 	}
+	return b
 }
 
 func isEmptyPlainBlock(block *Block) bool {
@@ -20,34 +14,47 @@ func isEmptyPlainBlock(block *Block) bool {
 	return false
 }
 
-func deleteEmptyPlainBlock(block *Block) {
-	prevEdge := block.Preds[0]
-	nextEdge := block.Succs[0]
+func deleteEmptyPlainBlocks(b *Block) *Block {
+	for isEmptyPlainBlock(b) {
+		next := b.Succs[0].Block()
+		deleteEmptyPlainBlock(b)
+		b = next
+	}
+	return b
+}
+
+func deleteEmptyPlainBlock(b *Block) {
+	prevEdge := b.Preds[0]
+	nextEdge := b.Succs[0]
 
 	prevEdge.b.Succs[prevEdge.i] = nextEdge
 	nextEdge.b.Preds[nextEdge.i] = prevEdge
 
-	invalidateEmptyPlainBlock(block)
+	invalidateEmptyPlainBlock(b)
 }
 
-func invalidateEmptyPlainBlock(block *Block) {
-	block.removePred(0)
-	block.removeSucc(0)
-	block.Reset(BlockInvalid)
+func invalidateEmptyPlainBlock(b *Block) {
+	b.removePred(0)
+	b.removeSucc(0)
+	b.Reset(BlockInvalid)
 }
 
 func mergeConditionalBranches(f *Func) {
-	skipEmptyPlains(f)
+	if f.Config.arch != "arm64" {
+		return
+	}
 
-	blocks := f.postorder()
+	blocks := f.Postorder()
 
-	for _, block := range blocks {
-		if detectNestedIfBlock(block, 0) {
-			transformNestedIfBlock(block, 0)
-		} else {
-			if detectNestedIfBlock(block, 1) {
-				transformNestedIfBlock(block, 1)
+	for _, b := range blocks {
+		isAndPattern := detectNestedIfBlock(b, 0)
+		isOrPattern := detectNestedIfBlock(b, 1)
+		if isAndPattern != isOrPattern {
+			index := 0
+			if isOrPattern {
+				index = 1
 			}
+			transformNestedIfBlock(b, index)
 		}
 	}
 }
@@ -57,8 +64,9 @@ func detectNestedIfBlock(b *Block, index int) bool {
 		return false
 	}
 
-	nestedBlock := b.Succs[index].Block()
-	if nestedBlock == b || nestedBlock == b.Succs[index^1].Block() {
+	nestedBlock := skipEmptyPlainBlocks(b.Succs[index].Block())
+	block1 := skipEmptyPlainBlocks(b.Succs[index^1].Block())
+	if nestedBlock == b || nestedBlock == block1 {
 		return false
 	}
 
@@ -68,8 +76,9 @@ func detectNestedIfBlock(b *Block, index int) bool {
 		return false
 	}
 
-	if b.Succs[index^1].Block() == nestedBlock.Succs[index^1].Block() {
-		return !hasPhi(b.Succs[index^1].Block())
+	block2 := skipEmptyPlainBlocks(nestedBlock.Succs[index^1].Block())
+	if block1 == block2 {
+		return !hasPhi(block1)
 	}
 	return false
 }
@@ -143,7 +152,9 @@ func isComparisonOperation(b *Block) bool {
 }
 
 func transformNestedIfBlock(b *Block, index int) {
-	nestedBlock := b.Succs[index].Block()
+	nestedBlock := deleteEmptyPlainBlocks(b.Succs[index].Block())
+	deleteEmptyPlainBlocks(b.Succs[index^1].Block())
+	deleteEmptyPlainBlocks(nestedBlock.Succs[index^1].Block())
 
 	transformControlValue(b)
 	transformControlValue(nestedBlock)
@@ -183,34 +194,34 @@ func setNewControlValue(block, nestedBlock *Block) {
 	nestedBlock.Likely = BranchUnknown
 }
 
-func transformControlValue(block *Block) {
-	value := block.Controls[0]
-	typ := &block.Func.Config.Types
+func transformControlValue(b *Block) {
+	value := b.Controls[0]
+	typ := &b.Func.Config.Types
 	arg0 := value.Args[0]
 
 	switch value.Op {
 	case OpARM64CMPconst:
 		auxConstant := auxIntToInt64(value.AuxInt)
 		value.reset(OpARM64CMP)
-		constantValue := block.NewValue0(value.Pos, OpARM64MOVDconst, typ.UInt64)
+		constantValue := b.NewValue0(value.Pos, OpARM64MOVDconst, typ.UInt64)
 		constantValue.AuxInt = int64ToAuxInt(auxConstant)
 		value.AddArg2(arg0, constantValue)
 	case OpARM64CMNconst:
 		auxConstant := auxIntToInt64(value.AuxInt)
 		value.reset(OpARM64CMN)
-		constantValue := block.NewValue0(value.Pos, OpARM64MOVDconst, typ.UInt64)
+		constantValue := b.NewValue0(value.Pos, OpARM64MOVDconst, typ.UInt64)
 		constantValue.AuxInt = int64ToAuxInt(auxConstant)
 		value.AddArg2(arg0, constantValue)
 	case OpARM64CMPWconst:
 		auxConstant := auxIntToInt32(value.AuxInt)
 		value.reset(OpARM64CMPW)
-		constantValue := block.NewValue0(value.Pos, OpARM64MOVDconst, typ.UInt64)
+		constantValue := b.NewValue0(value.Pos, OpARM64MOVDconst, typ.UInt64)
 		constantValue.AuxInt = int64ToAuxInt(int64(auxConstant))
 		value.AddArg2(arg0, constantValue)
 	case OpARM64CMNWconst:
 		auxConstant := auxIntToInt32(value.AuxInt)
 		value.reset(OpARM64CMNW)
-		constantValue := block.NewValue0(value.Pos, OpARM64MOVDconst, typ.UInt64)
+		constantValue := b.NewValue0(value.Pos, OpARM64MOVDconst, typ.UInt64)
 		constantValue.AuxInt = int64ToAuxInt(int64(auxConstant))
 		value.AddArg2(arg0, constantValue)
 	}
