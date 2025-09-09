@@ -671,8 +671,8 @@ func auxIntToArm64BitField(i int64) arm64BitField {
 }
 func auxIntToArm64ConditionalParams(i int64) arm64ConditionalParams {
 	var params arm64ConditionalParams
-	params.cond = Op(i & 0x0fff)
-	i >>= 12
+	params.cond = Op(i & 0xffff)
+	i >>= 16
 	params.nzcv = uint8(i & 0x0f)
 	i >>= 4
 	params.constValue = uint8(i & 0x1f)
@@ -722,12 +722,16 @@ func arm64BitFieldToAuxInt(v arm64BitField) int64 {
 	return int64(v)
 }
 func arm64ConditionalParamsToAuxInt(v arm64ConditionalParams) int64 {
+	if v.cond&^0xffff != 0 {
+		panic("condition value exceeds 16 bits")
+	}
+
 	var i int64
 	if v.ind {
-		i = 1 << 21
+		i = 1 << 25
 	}
-	i |= int64(v.constValue) << 16
-	i |= int64(v.nzcv) << 12
+	i |= int64(v.constValue) << 20
+	i |= int64(v.nzcv) << 16
 	i |= int64(v.cond)
 	return i
 }
