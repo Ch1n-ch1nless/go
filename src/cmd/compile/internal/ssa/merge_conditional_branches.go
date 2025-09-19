@@ -4,7 +4,10 @@
 
 package ssa
 
-import "cmd/compile/internal/types"
+import (
+	"cmd/compile/internal/types"
+	"os"
+)
 
 // mergeConditionalBranches optimizes nested conditional branches on ARM64.
 // The algorithm detects patterns where two consecutive conditional branches
@@ -30,6 +33,10 @@ func mergeConditionalBranches(f *Func) {
 		return
 	}
 
+	if name := os.Getenv("CCMP_GEN"); name != "YES" {
+		return
+	}
+
 	blocks := f.postorder()
 
 	for _, block := range blocks {
@@ -51,7 +58,8 @@ func skipEmptyPlainBlocks(block *Block) *Block {
 
 // ...
 func isEmptyPlainBlock(block *Block) bool {
-	if block.Kind == BlockPlain && len(block.Values) == 0 && len(block.Preds) == 1 {
+	if block.Kind == BlockPlain && len(block.Values) == 0 &&
+		len(block.Preds) == 1 && len(block.Succs) == 1 {
 		return true
 	}
 	return false
@@ -97,6 +105,7 @@ func detectNestedIfBlock(b *Block, index int) bool {
 	}
 
 	if len(nestedBlock.Preds) != 1 ||
+		len(nestedBlock.Succs) != 2 ||
 		!isIfBlock(nestedBlock) ||
 		!canValuesBeMoved(nestedBlock) {
 		return false
@@ -108,11 +117,12 @@ func detectNestedIfBlock(b *Block, index int) bool {
 		return false
 	}
 
-	if hasPhi(resultBlock1) {
-		// The value of Phis at the false target might be depend on which of
-		// the two branches we take to get to the false branch target.
-		return false
-	}
+	// Здесь надо придумать проверку фи-нод в resultBlock.
+	// Так как не факт, что ssa value из этих блоков
+
+	// Так же стоит проверить, и nestedBlock.Succs[index].Block()
+	// Там удалять пустые блоки может быть плохой идеей
+
 	return true
 }
 
@@ -135,8 +145,6 @@ func canValueBeMoved(v *Value) bool {
 	} else if opcodeTable[v.Op].nilCheck {
 		return false
 	} else if v.MemoryArg() != nil {
-		return false
-	} else if v.Type.IsPtr() {
 		return false
 	}
 	return true
@@ -210,9 +218,7 @@ func transformNestedIfBlock(b *Block, index int) {
 func clearPatternFromEmptyPlainBlocks(b *Block, index int) {
 	nestedBlock := deleteEmptyPlainBlocks(b.Succs[index].Block())
 	deleteEmptyPlainBlocks(b.Succs[index^1].Block())
-
-	deleteEmptyPlainBlocks(nestedBlock.Succs[0].Block())
-	deleteEmptyPlainBlocks(nestedBlock.Succs[1].Block())
+	deleteEmptyPlainBlocks(nestedBlock.Succs[index^1].Block())
 }
 
 func moveAllValues(dest, src *Block) {
@@ -231,7 +237,16 @@ func elimNestedBlock(b *Block, index int) {
 	prevEdge.b.Succs[prevEdge.i] = nextEdge
 	nextEdge.b.Preds[nextEdge.i] = prevEdge
 
-	removedEdge.b.removePred(removedEdge.i)
+	falseResultBlock := removedEdge.Block()
+	i := removedEdge.Index()
+
+	falseResultBlock.removePred(i)
+	for _, v := range falseResultBlock.Values {
+		if v.Op != OpPhi {
+			continue
+		}
+		falseResultBlock.removePhiArg(v, i)
+	}
 
 	b.removePred(0)
 	b.removeSucc(1)
