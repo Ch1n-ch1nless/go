@@ -6,7 +6,6 @@ package ssa
 
 import (
 	"cmd/compile/internal/types"
-	"os"
 )
 
 // mergeConditionalBranches optimizes nested conditional branches on ARM64.
@@ -30,10 +29,6 @@ import (
 // by leveraging ARM64's conditional execution capabilities.
 func mergeConditionalBranches(f *Func) {
 	if f.Config.arch != "arm64" {
-		return
-	}
-
-	if name := os.Getenv("CCMP_GEN"); name != "YES" {
 		return
 	}
 
@@ -117,11 +112,48 @@ func detectNestedIfBlock(b *Block, index int) bool {
 		return false
 	}
 
-	// Здесь надо придумать проверку фи-нод в resultBlock.
-	// Так как не факт, что ssa value из этих блоков
+	if !checkSameValuesInPhiNodes(b, nestedBlock, index^1) {
+		return false
+	}
 
-	// Так же стоит проверить, и nestedBlock.Succs[index].Block()
-	// Там удалять пустые блоки может быть плохой идеей
+	trueResultBlock := skipEmptyPlainBlocks(nestedBlock.Succs[index].Block())
+	if trueResultBlock == resultBlock2 {
+		return false
+	}
+
+	return true
+}
+
+func checkSameValuesInPhiNodes(b, nestedBlock *Block, index int) bool {
+	nextIndex1 := index
+	for isEmptyPlainBlock(b.Succs[nextIndex1].Block()) {
+		b = b.Succs[nextIndex1].Block()
+		nextIndex1 = 0
+	}
+
+	nextIndex2 := index
+	for isEmptyPlainBlock(nestedBlock.Succs[nextIndex2].Block()) {
+		nestedBlock = nestedBlock.Succs[nextIndex2].Block()
+		nextIndex2 = 0
+	}
+
+	if b.Succs[nextIndex1].Block() != nestedBlock.Succs[nextIndex2].Block() {
+		return false
+	}
+
+	argIndex1 := b.Succs[nextIndex1].Index()
+	argIndex2 := nestedBlock.Succs[nextIndex2].Index()
+
+	resultBlock := b.Succs[nextIndex1].Block()
+	for _, v := range resultBlock.Values {
+		if v.Op != OpPhi {
+			continue
+		}
+
+		if v.Args[argIndex1] != v.Args[argIndex2] {
+			return false
+		}
+	}
 
 	return true
 }
@@ -218,7 +250,9 @@ func transformNestedIfBlock(b *Block, index int) {
 func clearPatternFromEmptyPlainBlocks(b *Block, index int) {
 	nestedBlock := deleteEmptyPlainBlocks(b.Succs[index].Block())
 	deleteEmptyPlainBlocks(b.Succs[index^1].Block())
-	deleteEmptyPlainBlocks(nestedBlock.Succs[index^1].Block())
+
+	deleteEmptyPlainBlocks(nestedBlock.Succs[0].Block())
+	deleteEmptyPlainBlocks(nestedBlock.Succs[1].Block())
 }
 
 func moveAllValues(dest, src *Block) {
