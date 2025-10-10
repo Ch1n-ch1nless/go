@@ -8,6 +8,12 @@ import (
 	"cmd/compile/internal/types"
 )
 
+const (
+	InvalidIndex = -1 + iota
+	TrueConditionSuccIndex
+	FalseConditionSuccIndex
+)
+
 // mergeConditionalBranches optimizes nested conditional branches on ARM64.
 // The algorithm detects patterns where two consecutive conditional branches
 // form logical AND/OR operations and transforms them into conditional
@@ -35,23 +41,23 @@ func mergeConditionalBranches(f *Func) {
 	blocks := f.postorder()
 
 	for _, block := range blocks {
-		if detectNestedIfBlock(block, 0) {
-			transformNestedIfBlock(block, 0)
-		} else if detectNestedIfBlock(block, 1) {
-			transformNestedIfBlock(block, 1)
+		extSuccIndex, intSuccIndex := detectNestedIfPattern(block)
+		if extSuccIndex != InvalidIndex && intSuccIndex != InvalidIndex {
+			transformNestedIfPattern(block, extSuccIndex, intSuccIndex)
 		}
 	}
 }
 
-// ...
-func skipEmptyPlainBlocks(block *Block) *Block {
-	for isEmptyPlainBlock(block) {
-		block = block.Succs[0].Block()
+// findFirstNonEmptyPlainBlock returns first non empty plain successor
+// in the chain of successors
+func findFirstNonEmptyPlainBlock(parentBlock *Block, childIndex int) *Block {
+	childBlock := parentBlock.Succs[childIndex].Block()
+	for isEmptyPlainBlock(childBlock) {
+		childBlock = childBlock.Succs[0].Block()
 	}
-	return block
+	return childBlock
 }
 
-// ...
 func isEmptyPlainBlock(block *Block) bool {
 	if block.Kind == BlockPlain && len(block.Values) == 0 &&
 		len(block.Preds) == 1 && len(block.Succs) == 1 {
@@ -60,17 +66,19 @@ func isEmptyPlainBlock(block *Block) bool {
 	return false
 }
 
-// ...
-func deleteEmptyPlainBlocks(block *Block) *Block {
-	for isEmptyPlainBlock(block) {
-		nextBlock := block.Succs[0].Block()
-		deleteEmptyPlainBlock(block)
-		block = nextBlock
+// deleteEmptyPlainBlocks delete all chain of empty plain succesors and return
+// first non empty plain succesor
+func deleteEmptyPlainBlocks(parentBlock *Block, childIndex int) *Block {
+	childBlock := parentBlock.Succs[childIndex].Block()
+	for isEmptyPlainBlock(childBlock) {
+		nextBlock := childBlock.Succs[0].Block()
+		deleteEmptyPlainBlock(childBlock)
+		childBlock = nextBlock
 	}
-	return block
+	return childBlock
 }
 
-// ...
+// deleteEmptyBlock delete block from chain of blocks
 func deleteEmptyPlainBlock(block *Block) {
 	prevEdge := block.Preds[0]
 	nextEdge := block.Succs[0]
@@ -78,73 +86,127 @@ func deleteEmptyPlainBlock(block *Block) {
 	prevEdge.b.Succs[prevEdge.i] = nextEdge
 	nextEdge.b.Preds[nextEdge.i] = prevEdge
 
-	invalidateEmptyPlainBlock(block)
-}
-
-// ...
-func invalidateEmptyPlainBlock(block *Block) {
 	block.removePred(0)
 	block.removeSucc(0)
 	block.Reset(BlockInvalid)
 }
 
-func detectNestedIfBlock(b *Block, index int) bool {
-	if !isIfBlock(b) {
-		return false
+// ...
+func detectNestedIfPattern(extBlock *Block) (int, int) {
+	if !isIfBlock(extBlock) {
+		return InvalidIndex, InvalidIndex
 	}
 
-	nestedBlock := skipEmptyPlainBlocks(b.Succs[index].Block())
-	resultBlock1 := skipEmptyPlainBlocks(b.Succs[index^1].Block())
-	if nestedBlock == b || nestedBlock == resultBlock1 {
-		return false
+	thenBlock := findFirstNonEmptyPlainBlock(extBlock, TrueConditionSuccIndex)
+	elseBlock := findFirstNonEmptyPlainBlock(extBlock, FalseConditionSuccIndex)
+	if thenBlock == elseBlock {
+		return InvalidIndex, InvalidIndex
 	}
 
-	if len(nestedBlock.Preds) != 1 ||
-		len(nestedBlock.Succs) != 2 ||
-		!isIfBlock(nestedBlock) ||
-		!canValuesBeMoved(nestedBlock) {
-		return false
+	if thenBlock == extBlock {
+		return detectCyclePattern(extBlock, FalseConditionSuccIndex)
+		return InvalidIndex, InvalidIndex
+	} else if elseBlock == extBlock {
+		return detectCyclePattern(extBlock, TrueConditionSuccIndex)
+		return InvalidIndex, InvalidIndex
 	}
 
-	resultBlock2 := skipEmptyPlainBlocks(nestedBlock.Succs[index^1].Block())
-	if resultBlock1 != resultBlock2 {
-		// Both false branches must go to same target
-		return false
+	extSuccIndex := InvalidIndex
+	if len(thenBlock.Preds) == 1 &&
+		len(thenBlock.Succs) == 2 &&
+		isIfBlock(thenBlock) &&
+		canValuesBeMoved(thenBlock) {
+		extSuccIndex = TrueConditionSuccIndex
+	} else if len(elseBlock.Preds) == 1 &&
+		len(elseBlock.Succs) == 2 &&
+		isIfBlock(elseBlock) &&
+		canValuesBeMoved(elseBlock) {
+		extSuccIndex = FalseConditionSuccIndex
 	}
 
-	if !checkSameValuesInPhiNodes(b, nestedBlock, index^1) {
-		return false
+	if extSuccIndex == InvalidIndex {
+		return InvalidIndex, InvalidIndex
 	}
 
-	trueResultBlock := skipEmptyPlainBlocks(nestedBlock.Succs[index].Block())
-	if trueResultBlock == resultBlock2 {
-		return false
+	intBlock := findFirstNonEmptyPlainBlock(extBlock, extSuccIndex)
+	notBothMetBlock := findFirstNonEmptyPlainBlock(extBlock, extSuccIndex^1)
+	thenBlock = findFirstNonEmptyPlainBlock(intBlock, TrueConditionSuccIndex)
+	elseBlock = findFirstNonEmptyPlainBlock(intBlock, FalseConditionSuccIndex)
+
+	if intBlock == thenBlock || intBlock == elseBlock {
+		// Так как далее планируется удалить данный блок, то если он ссылается на себя, то при удалении мы повредим всю цепочку блоков
+		return InvalidIndex, InvalidIndex
 	}
 
-	return true
+	intSuccIndex := InvalidIndex
+	if notBothMetBlock == elseBlock {
+		intSuccIndex = TrueConditionSuccIndex
+	} else if notBothMetBlock == thenBlock {
+		intSuccIndex = FalseConditionSuccIndex
+	}
+
+	if intSuccIndex == InvalidIndex {
+		return InvalidIndex, InvalidIndex
+	}
+
+	if !checkSameValuesInPhiNodes(extBlock, intBlock, extSuccIndex^1, intSuccIndex^1) {
+		return InvalidIndex, InvalidIndex
+	}
+
+	return extSuccIndex, intSuccIndex
 }
 
-func checkSameValuesInPhiNodes(b, nestedBlock *Block, index int) bool {
-	nextIndex1 := index
-	for isEmptyPlainBlock(b.Succs[nextIndex1].Block()) {
-		b = b.Succs[nextIndex1].Block()
-		nextIndex1 = 0
+func detectCyclePattern(extBlock *Block, exitIndex int) (int, int) {
+	secondCondBlock := findFirstNonEmptyPlainBlock(extBlock, exitIndex)
+
+	if len(secondCondBlock.Preds) != 1 ||
+		len(secondCondBlock.Succs) != 2 ||
+		!isIfBlock(secondCondBlock) ||
+		!canValuesBeMoved(secondCondBlock) {
+		return InvalidIndex, InvalidIndex
 	}
 
-	nextIndex2 := index
-	for isEmptyPlainBlock(nestedBlock.Succs[nextIndex2].Block()) {
-		nestedBlock = nestedBlock.Succs[nextIndex2].Block()
-		nextIndex2 = 0
+	thenBlock := findFirstNonEmptyPlainBlock(secondCondBlock, TrueConditionSuccIndex)
+	elseBlock := findFirstNonEmptyPlainBlock(secondCondBlock, FalseConditionSuccIndex)
+
+	if thenBlock == elseBlock {
+		// Они не должны указывать оба на 1 и тот же блок...
+		return InvalidIndex, InvalidIndex
 	}
 
-	if b.Succs[nextIndex1].Block() != nestedBlock.Succs[nextIndex2].Block() {
+	if extBlock == thenBlock {
+		if !checkSameValuesInPhiNodes(extBlock, secondCondBlock, exitIndex^1, TrueConditionSuccIndex) {
+			return InvalidIndex, InvalidIndex
+		}
+		return exitIndex, FalseConditionSuccIndex
+	} else if extBlock == elseBlock {
+		if !checkSameValuesInPhiNodes(extBlock, secondCondBlock, exitIndex^1, FalseConditionSuccIndex) {
+			return InvalidIndex, InvalidIndex
+		}
+		return exitIndex, TrueConditionSuccIndex
+	}
+	return InvalidIndex, InvalidIndex
+}
+
+func checkSameValuesInPhiNodes(extBlock, intBlock *Block, extSuccIndex, intSuccIndex int) bool {
+	for isEmptyPlainBlock(extBlock.Succs[extSuccIndex].Block()) {
+		extBlock = extBlock.Succs[extSuccIndex].Block()
+		extSuccIndex = 0
+	}
+
+	for isEmptyPlainBlock(intBlock.Succs[intSuccIndex].Block()) {
+		intBlock = intBlock.Succs[intSuccIndex].Block()
+		intSuccIndex = 0
+	}
+
+	if extBlock.Succs[extSuccIndex].Block() != intBlock.Succs[intSuccIndex].Block() {
 		return false
 	}
 
-	argIndex1 := b.Succs[nextIndex1].Index()
-	argIndex2 := nestedBlock.Succs[nextIndex2].Index()
+	argIndex1 := extBlock.Succs[extSuccIndex].Index()
+	argIndex2 := intBlock.Succs[intSuccIndex].Index()
 
-	resultBlock := b.Succs[nextIndex1].Block()
+	resultBlock := extBlock.Succs[extSuccIndex].Block()
 	for _, v := range resultBlock.Values {
 		if v.Op != OpPhi {
 			continue
@@ -170,13 +232,17 @@ func canValuesBeMoved(b *Block) bool {
 func canValueBeMoved(v *Value) bool {
 	if v.Op == OpPhi {
 		return false
-	} else if v.Type.IsMemory() {
+	}
+	if v.Type.IsMemory() {
 		return false
-	} else if v.Op.HasSideEffects() {
+	}
+	if v.Op.HasSideEffects() {
 		return false
-	} else if opcodeTable[v.Op].nilCheck {
+	}
+	if opcodeTable[v.Op].nilCheck {
 		return false
-	} else if v.MemoryArg() != nil {
+	}
+	if v.MemoryArg() != nil {
 		return false
 	}
 	return true
@@ -234,26 +300,26 @@ func isComparisonOperation(value *Value) bool {
 	}
 }
 
-func transformNestedIfBlock(b *Block, index int) {
-	clearPatternFromEmptyPlainBlocks(b, index)
-	nestedBlock := b.Succs[index].Block()
+func transformNestedIfPattern(extBlock *Block, extSuccIndex, intSuccIndex int) {
+	intBlock := deleteEmptyPlainBlocks(extBlock, extSuccIndex)
+	deleteEmptyPlainBlocks(intBlock, intSuccIndex)
 
-	transformPrimaryComparisonValue(b)
-	transformDependentComparisonValue(nestedBlock)
-	transformToConditionalComparisonValue(b, index)
-	fixComparisonWithConstant(nestedBlock, index)
-	setNewControlValue(b, index)
-	moveAllValues(b, nestedBlock)
-	elimNestedBlock(nestedBlock, index)
+	transformPrimaryComparisonValue(extBlock)
+	transformDependentComparisonValue(intBlock)
+	transformToConditionalComparisonValue(extBlock, extSuccIndex, intSuccIndex)
+	fixComparisonWithConstant(intBlock, extSuccIndex)
+	setNewControlValue(extBlock, intBlock, extSuccIndex, intSuccIndex)
+	moveAllValues(extBlock, intBlock)
+	elimNestedBlock(intBlock, intSuccIndex)
 }
 
-func clearPatternFromEmptyPlainBlocks(b *Block, index int) {
-	nestedBlock := deleteEmptyPlainBlocks(b.Succs[index].Block())
-	deleteEmptyPlainBlocks(b.Succs[index^1].Block())
+/*func clearPatternFromEmptyPlainBlocks(extBlock *Block, extSuccIndex int) {
+	intBlock := deleteEmptyPlainBlocks(extBlock, extSuccIndex)
+	deleteEmptyPlainBlocks(extBlock, extSuccIndex^1)
 
-	deleteEmptyPlainBlocks(nestedBlock.Succs[0].Block())
-	deleteEmptyPlainBlocks(nestedBlock.Succs[1].Block())
-}
+	deleteEmptyPlainBlocks(intBlock, TrueConditionSuccIndex)
+	deleteEmptyPlainBlocks(intBlock, FalseConditionSuccIndex)
+}*/
 
 func moveAllValues(dest, src *Block) {
 	for _, value := range src.Values {
@@ -264,16 +330,12 @@ func moveAllValues(dest, src *Block) {
 }
 
 func elimNestedBlock(b *Block, index int) {
-	prevEdge := b.Preds[0]
-	nextEdge := b.Succs[index]
 	removedEdge := b.Succs[index^1]
-
-	prevEdge.b.Succs[prevEdge.i] = nextEdge
-	nextEdge.b.Preds[nextEdge.i] = prevEdge
 
 	falseResultBlock := removedEdge.Block()
 	i := removedEdge.Index()
 
+	b.removeSucc(index ^ 1)
 	falseResultBlock.removePred(i)
 	for _, v := range falseResultBlock.Values {
 		if v.Op != OpPhi {
@@ -282,23 +344,26 @@ func elimNestedBlock(b *Block, index int) {
 		falseResultBlock.removePhiArg(v, i)
 	}
 
-	b.removePred(0)
-	b.removeSucc(1)
-	b.removeSucc(0)
-	b.Reset(BlockInvalid)
+	b.Func.invalidateCFG()
+	b.Reset(BlockPlain)
+	b.Likely = BranchUnknown
 }
 
-func setNewControlValue(block *Block, index int) {
-	nestedBlock := block.Succs[index].Block()
-	block.resetWithControl(nestedBlock.Kind, nestedBlock.Controls[0])
-	if index == 0 && block.Likely == BranchLikely && nestedBlock.Likely == BranchLikely {
-		block.Likely = BranchLikely
-	} else if index == 1 && block.Likely == BranchUnlikely && nestedBlock.Likely == BranchUnlikely {
-		block.Likely = BranchUnlikely
-	} else {
-		block.Likely = BranchUnknown
+func setNewControlValue(extBlock, intBlock *Block, extSuccIndex, intSuccIndex int) {
+	extBlock.resetWithControl(intBlock.Kind, intBlock.Controls[0])
+	if !checkLikelyAndIndex(extBlock, extSuccIndex) ||
+		!checkLikelyAndIndex(intBlock, intSuccIndex) {
+		extBlock.Likely = BranchUnknown
 	}
-	nestedBlock.Likely = BranchUnknown
+}
+
+func checkLikelyAndIndex(b *Block, index int) bool {
+	if index == TrueConditionSuccIndex && b.Likely == BranchLikely {
+		return true
+	} else if index == FalseConditionSuccIndex && b.Likely == BranchUnlikely {
+		return true
+	}
+	return false
 }
 
 func transformPrimaryComparisonValue(block *Block) {
@@ -512,32 +577,38 @@ func invertConditionsInBlock(block *Block, index int) arm64ConditionalParams {
 	params := block.Controls[0].AuxArm64ConditionalParams()
 	newKind := invertBlockKind(block.Kind)
 	block.Kind = newKind
-	if index == 1 {
+	if index == FalseConditionSuccIndex {
 		newKind = negateBlockKind(newKind)
 	}
-	params.nzcv = getNzcvByBlockKind(newKind)
+	params.nzcv = nzcvByBlockKind(newKind)
 	return params
 }
 
-func transformToConditionalComparisonValue(block *Block, index int) {
-	nestedBlock := block.Succs[index].Block()
+func transformToConditionalComparisonValue(extBlock *Block, extSuccIndex, intSuccIndex int) {
+	intBlock := extBlock.Succs[extSuccIndex].Block()
 
-	oldValue := block.Controls[0]
-	oldKind := block.Kind
-
-	nestedValue := nestedBlock.Controls[0]
-	nestedKind := nestedBlock.Kind
-
-	if index == 1 {
-		oldKind = negateBlockKind(oldKind)
-		nestedKind = negateBlockKind(nestedKind)
+	if extSuccIndex != intSuccIndex {
+		extBlock.Kind = negateBlockKind(extBlock.Kind)
+		extBlock.swapSuccessors()
+		extSuccIndex ^= 1
 	}
 
-	params := getConditionalParamsByBlockKind(oldKind, nestedKind)
+	oldValue := extBlock.Controls[0]
+	oldKind := extBlock.Kind
 
-	nestedValue.AddArg(oldValue)
-	nestedValue.Op = transformOpToConditionalComparisonOperation(nestedValue.Op)
-	nestedValue.AuxInt = arm64ConditionalParamsToAuxInt(params)
+	newValue := intBlock.Controls[0]
+	newKind := intBlock.Kind
+
+	if extSuccIndex == FalseConditionSuccIndex {
+		oldKind = negateBlockKind(oldKind)
+		newKind = negateBlockKind(newKind)
+	}
+
+	params := getConditionalParamsByBlockKind(oldKind, newKind)
+
+	newValue.AddArg(oldValue)
+	newValue.Op = transformOpToConditionalComparisonOperation(newValue.Op)
+	newValue.AuxInt = arm64ConditionalParamsToAuxInt(params)
 }
 
 func transformOpToConditionalComparisonOperation(op Op) Op {
@@ -564,18 +635,18 @@ func transformOpToConditionalComparisonOperation(op Op) Op {
 }
 
 func getConditionalParamsByBlockKind(intKind, exKind BlockKind) arm64ConditionalParams {
-	cond := getCondByBlockKind(intKind)
-	nzcv := getNzcvByBlockKind(exKind)
+	cond := condByBlockKind(intKind)
+	nzcv := nzcvByBlockKind(exKind)
 	return arm64ConditionalParamsAuxInt(cond, nzcv)
 }
 
 func getConditionalParamsWithConstantByBlockKind(intKind, exKind BlockKind, auxConstant uint8) arm64ConditionalParams {
-	cond := getCondByBlockKind(intKind)
-	nzcv := getNzcvByBlockKind(exKind)
+	cond := condByBlockKind(intKind)
+	nzcv := nzcvByBlockKind(exKind)
 	return arm64ConditionalParamsAuxIntWithValue(cond, nzcv, auxConstant)
 }
 
-func getCondByBlockKind(kind BlockKind) Op {
+func condByBlockKind(kind BlockKind) Op {
 	switch kind {
 	case BlockARM64EQ:
 		return OpARM64Equal
@@ -602,31 +673,48 @@ func getCondByBlockKind(kind BlockKind) Op {
 	}
 }
 
-func getNzcvByBlockKind(kind BlockKind) uint8 {
+func nzcvByBlockKind(kind BlockKind) uint8 {
 	switch kind {
 	case BlockARM64EQ:
-		return 0 // N=0,Z=0,C=0,V=0
+		return packNZCV(false, false, false, false) // N=0,Z=0,C=0,V=0
 	case BlockARM64NE:
-		return 4 // N=0,Z=1,C=0,V=0
+		return packNZCV(false, true, false, false) // N=0,Z=1,C=0,V=0
 	case BlockARM64LT:
-		return 0 // N=0,Z=0,C=0,V=0
+		return packNZCV(false, false, false, false) // N=0,Z=0,C=0,V=0
 	case BlockARM64LE:
-		return 0 // N=0,Z=0,C=0,V=0
+		return packNZCV(false, false, false, false) // N=0,Z=0,C=0,V=0
 	case BlockARM64GT:
-		return 4 // N=0,Z=1,C=0,V=0
+		return packNZCV(false, true, false, false) // N=0,Z=1,C=0,V=0
 	case BlockARM64GE:
-		return 1 // N=0,Z=0,C=0,V=1
+		return packNZCV(false, false, false, true) // N=0,Z=0,C=0,V=1
 	case BlockARM64ULT:
-		return 2 // N=0,Z=0,C=1,V=0
+		return packNZCV(false, false, true, false) // N=0,Z=0,C=1,V=0
 	case BlockARM64ULE:
-		return 2 // N=0,Z=0,C=1,V=0
+		return packNZCV(false, false, true, false) // N=0,Z=0,C=1,V=0
 	case BlockARM64UGT:
-		return 0 // N=0,Z=0,C=0,V=0
+		return packNZCV(false, false, false, false) // N=0,Z=0,C=0,V=0
 	case BlockARM64UGE:
-		return 0 // N=0,Z=0,C=0,V=0
+		return packNZCV(false, false, false, false) // N=0,Z=0,C=0,V=0
 	default:
 		panic("Incorrect kind of Block")
 	}
+}
+
+func packNZCV(N, Z, C, V bool) uint8 {
+	var NZCVFlags uint8 = 0
+	if N {
+		NZCVFlags |= 1 << 3
+	}
+	if Z {
+		NZCVFlags |= 1 << 2
+	}
+	if C {
+		NZCVFlags |= 1 << 1
+	}
+	if V {
+		NZCVFlags |= 1
+	}
+	return NZCVFlags
 }
 
 func negateBlockKind(kind BlockKind) BlockKind {
