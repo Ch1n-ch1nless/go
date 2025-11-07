@@ -511,7 +511,7 @@ func UintGeqOne(a uint8, b uint16, c uint32, d uint64) int {
 }
 
 func ConditionalCompareUint8(a, b uint8) int {
-	// arm64:"CCMPW\tEQ, R[0-9]+, [$]1, [$]0"
+	// arm64:"CCMPW EQ, R[0-9]+, [$]1, [$]0"
 	if a == 1 && b == 1 {
 		return 1
 	}
@@ -519,7 +519,7 @@ func ConditionalCompareUint8(a, b uint8) int {
 }
 
 func ConditionalCompareInt16(a, b int16) int {
-	// arm64:"CCMPW\tLE, R[0-9]+, R[0-9]+, [$]4"
+	// arm64:"CCMPW LE, R[0-9]+, R[0-9]+, [$]4"
 	if a > 3 || a == b {
 		return 1
 	}
@@ -527,7 +527,7 @@ func ConditionalCompareInt16(a, b int16) int {
 }
 
 func ConditionalCompareUint32(a, b uint32) int {
-	// arm64:"CCMPW\tLO, R[0-9]+, [$]28, [$]2"
+	// arm64:"CCMPW LO, R[0-9]+, [$]28, [$]2"
 	if a > b && a < 28 {
 		return 1
 	}
@@ -535,7 +535,7 @@ func ConditionalCompareUint32(a, b uint32) int {
 }
 
 func ConditionalCompareInt64(a, b int64) int {
-	// arm64:"CCMP\tGT, R[0-9]+, R[0-9]+, [$]0"
+	// arm64:"CCMP GT, R[0-9]+, R[0-9]+, [$]0"
 	if a <= 16 || a != b {
 		return 1
 	}
