@@ -199,10 +199,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	defer func() {
 		if v := recover(); v != nil {
-			if v == http.ErrAbortHandler {
-				panic(v)
-			}
-			s.logger.Fatalf("panic serving %s: %v\n%s", req.URL, v, debug.Stack())
+			debug.PrintStack()
+			s.logger.Fatal(v)
 		}
 	}()
 

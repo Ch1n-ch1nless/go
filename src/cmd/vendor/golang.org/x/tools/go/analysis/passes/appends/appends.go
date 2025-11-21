@@ -15,7 +15,7 @@ import (
 	"golang.org/x/tools/go/analysis/passes/inspect"
 	"golang.org/x/tools/go/ast/inspector"
 	"golang.org/x/tools/go/types/typeutil"
-	"golang.org/x/tools/internal/analysis/analyzerutil"
+	"golang.org/x/tools/internal/analysisinternal"
 )
 
 //go:embed doc.go
@@ -23,7 +23,7 @@ var doc string
 
 var Analyzer = &analysis.Analyzer{
 	Name:     "appends",
-	Doc:      analyzerutil.MustExtractDoc(doc, "appends"),
+	Doc:      analysisinternal.MustExtractDoc(doc, "appends"),
 	URL:      "https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/appends",
 	Requires: []*analysis.Analyzer{inspect.Analyzer},
 	Run:      run,

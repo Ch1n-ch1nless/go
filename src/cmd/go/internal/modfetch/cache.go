@@ -622,11 +622,10 @@ func writeDiskStat(ctx context.Context, file string, info *RevInfo) error {
 		o := *info.Origin
 		info.Origin = &o
 
-		// Tags and RepoSum never matter if you are starting with a semver version,
+		// Tags never matter if you are starting with a semver version,
 		// as we would be when finding this cache entry.
 		o.TagSum = ""
 		o.TagPrefix = ""
-		o.RepoSum = ""
 		// Ref doesn't matter if you have a pseudoversion.
 		if module.IsPseudoVersion(info.Version) {
 			o.Ref = ""

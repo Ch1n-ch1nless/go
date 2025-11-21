@@ -145,14 +145,14 @@ func (r *CovDataReader) Visit() error {
 	return nil
 }
 
-func (r *CovDataReader) verb(vlevel int, s string, a ...any) {
+func (r *CovDataReader) verb(vlevel int, s string, a ...interface{}) {
 	if r.verbosityLevel >= vlevel {
 		fmt.Fprintf(os.Stderr, s, a...)
 		fmt.Fprintf(os.Stderr, "\n")
 	}
 }
 
-func (r *CovDataReader) warn(s string, a ...any) {
+func (r *CovDataReader) warn(s string, a ...interface{}) {
 	fmt.Fprintf(os.Stderr, "warning: ")
 	fmt.Fprintf(os.Stderr, s, a...)
 	fmt.Fprintf(os.Stderr, "\n")
@@ -161,7 +161,7 @@ func (r *CovDataReader) warn(s string, a ...any) {
 	}
 }
 
-func (r *CovDataReader) fatal(s string, a ...any) error {
+func (r *CovDataReader) fatal(s string, a ...interface{}) error {
 	if r.err != nil {
 		return nil
 	}

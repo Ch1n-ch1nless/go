@@ -192,7 +192,7 @@ func collectPodsImpl(files []string, dirIndices []int, warn bool) []Pod {
 	return pods
 }
 
-func warning(s string, a ...any) {
+func warning(s string, a ...interface{}) {
 	fmt.Fprintf(os.Stderr, "warning: ")
 	fmt.Fprintf(os.Stderr, s, a...)
 	fmt.Fprintf(os.Stderr, "\n")

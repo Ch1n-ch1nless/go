@@ -76,7 +76,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid module@version syntax", http.StatusBadRequest)
 			return
 		}
-		escPath, escVers, _ := strings.Cut(mod, "@")
+		i := strings.Index(mod, "@")
+		escPath, escVers := mod[:i], mod[i+1:]
 		path, err := module.UnescapePath(escPath)
 		if err != nil {
 			reportError(w, err)

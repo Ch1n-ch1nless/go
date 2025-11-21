@@ -30,10 +30,10 @@ func TestIssue33649(t *testing.T) {
 			tf = f
 			return true
 		})
-		tfEnd := tf.End()
+		tfEnd := tf.Base() + tf.Size()
 
 		fd := f.Decls[len(f.Decls)-1].(*ast.FuncDecl)
-		fdEnd := fd.End()
+		fdEnd := int(fd.End())
 
 		if fdEnd != tfEnd {
 			t.Errorf("%q: got fdEnd = %d; want %d (base = %d, size = %d)", src, fdEnd, tfEnd, tf.Base(), tf.Size())

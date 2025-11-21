@@ -10,7 +10,6 @@ package scanner
 import (
 	"bytes"
 	"fmt"
-	"go/internal/scannerhooks"
 	"go/token"
 	"path/filepath"
 	"strconv"
@@ -42,17 +41,9 @@ type Scanner struct {
 	lineOffset int       // current line offset
 	insertSemi bool      // insert a semicolon before next newline
 	nlPos      token.Pos // position of newline in preceding comment
-	stringEnd  token.Pos // end position; defined only for STRING tokens
 
 	// public state - ok to modify
 	ErrorCount int // number of errors encountered
-}
-
-// Provide go/parser with backdoor access to the StringEnd information.
-func init() {
-	scannerhooks.StringEnd = func(scanner any) token.Pos {
-		return scanner.(*Scanner).stringEnd
-	}
 }
 
 const (
@@ -700,7 +691,7 @@ func stripCR(b []byte, comment bool) []byte {
 	return c[:i]
 }
 
-func (s *Scanner) scanRawString() (string, int) {
+func (s *Scanner) scanRawString() string {
 	// '`' opening already consumed
 	offs := s.offset - 1
 
@@ -721,12 +712,11 @@ func (s *Scanner) scanRawString() (string, int) {
 	}
 
 	lit := s.src[offs:s.offset]
-	rawLen := len(lit)
 	if hasCR {
 		lit = stripCR(lit, false)
 	}
 
-	return string(lit), rawLen
+	return string(lit)
 }
 
 func (s *Scanner) skipWhitespace() {
@@ -860,7 +850,6 @@ scanAgain:
 			insertSemi = true
 			tok = token.STRING
 			lit = s.scanString()
-			s.stringEnd = pos + token.Pos(len(lit))
 		case '\'':
 			insertSemi = true
 			tok = token.CHAR
@@ -868,9 +857,7 @@ scanAgain:
 		case '`':
 			insertSemi = true
 			tok = token.STRING
-			var rawLen int
-			lit, rawLen = s.scanRawString()
-			s.stringEnd = pos + token.Pos(rawLen)
+			lit = s.scanRawString()
 		case ':':
 			tok = s.switch2(token.COLON, token.DEFINE)
 		case '.':

@@ -148,7 +148,7 @@ type ExpFunc struct {
 // A TypeRepr contains the string representation of a type.
 type TypeRepr struct {
 	Repr       string
-	FormatArgs []any
+	FormatArgs []interface{}
 }
 
 // A Type collects information about a type in both the C and Go worlds.

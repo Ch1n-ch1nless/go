@@ -68,7 +68,6 @@ func (q *spanQueue) destroy() {
 
 type spanSPMC struct {
 	_ sys.NotInHeap
-	allnode listNodeManual
 }
 
 func freeDeadSpanSPMCs() {

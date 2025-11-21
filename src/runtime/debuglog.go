@@ -196,8 +196,7 @@ const (
 	debugLogPtr
 	debugLogString
 	debugLogConstString
-	debugLogHexdump
-	debugLogOverflow
+	debugLogStringOverflow
 
 	debugLogPC
 	debugLogTraceback
@@ -366,36 +365,10 @@ func (l *dloggerImpl) s(x string) *dloggerImpl {
 		l.w.uvarint(uint64(len(b)))
 		l.w.bytes(b)
 		if len(b) != len(x) {
-			l.w.byte(debugLogOverflow)
+			l.w.byte(debugLogStringOverflow)
 			l.w.uvarint(uint64(len(x) - len(b)))
 		}
 	}
-	return l
-}
-
-//go:nosplit
-func (l dloggerFake) hexdump(p unsafe.Pointer, bytes uintptr) dloggerFake { return l }
-
-//go:nosplit
-func (l *dloggerImpl) hexdump(p unsafe.Pointer, bytes uintptr) *dloggerImpl {
-	var b []byte
-	bb := (*slice)(unsafe.Pointer(&b))
-	bb.array = unsafe.Pointer(p)
-	bb.len, bb.cap = int(bytes), int(bytes)
-	if len(b) > debugLogStringLimit {
-		b = b[:debugLogStringLimit]
-	}
-
-	l.w.byte(debugLogHexdump)
-	l.w.uvarint(uint64(uintptr(p)))
-	l.w.uvarint(uint64(len(b)))
-	l.w.bytes(b)
-
-	if uintptr(len(b)) != bytes {
-		l.w.byte(debugLogOverflow)
-		l.w.uvarint(uint64(bytes) - uint64(len(b)))
-	}
-
 	return l
 }
 
@@ -735,29 +708,8 @@ func (r *debugLogReader) printVal() bool {
 		s := *(*string)(unsafe.Pointer(&str))
 		print(s)
 
-	case debugLogOverflow:
+	case debugLogStringOverflow:
 		print("..(", r.uvarint(), " more bytes)..")
-
-	case debugLogHexdump:
-		p := uintptr(r.uvarint())
-		bl := r.uvarint()
-		if r.begin+bl > r.end {
-			r.begin = r.end
-			print("<hexdump length corrupted>")
-			break
-		}
-		println() // Start on a new line
-		hd := hexdumper{addr: p}
-		for bl > 0 {
-			b := r.data.b[r.begin%uint64(len(r.data.b)):]
-			if uint64(len(b)) > bl {
-				b = b[:bl]
-			}
-			r.begin += uint64(len(b))
-			bl -= uint64(len(b))
-			hd.write(b)
-		}
-		hd.close()
 
 	case debugLogPC:
 		printDebugLogPC(uintptr(r.uvarint()), false)

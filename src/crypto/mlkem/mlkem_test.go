@@ -2,14 +2,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package mlkem_test
+package mlkem
 
 import (
 	"bytes"
 	"crypto/internal/fips140/mlkem"
 	"crypto/internal/fips140/sha3"
-	. "crypto/mlkem"
-	"crypto/mlkem/mlkemtest"
 	"crypto/rand"
 	"encoding/hex"
 	"flag"
@@ -178,7 +176,7 @@ func TestAccumulated(t *testing.T) {
 	s := sha3.NewShake128()
 	o := sha3.NewShake128()
 	seed := make([]byte, SeedSize)
-	msg := make([]byte, 32)
+	var msg [32]byte
 	ct1 := make([]byte, CiphertextSize768)
 
 	for i := 0; i < n; i++ {
@@ -190,11 +188,8 @@ func TestAccumulated(t *testing.T) {
 		ek := dk.EncapsulationKey()
 		o.Write(ek.Bytes())
 
-		s.Read(msg)
-		k, ct, err := mlkemtest.Encapsulate768(ek, msg)
-		if err != nil {
-			t.Fatal(err)
-		}
+		s.Read(msg[:])
+		k, ct := ek.key.EncapsulateInternal(&msg)
 		o.Write(ct)
 		o.Write(k)
 
@@ -236,6 +231,8 @@ func BenchmarkKeyGen(b *testing.B) {
 func BenchmarkEncaps(b *testing.B) {
 	seed := make([]byte, SeedSize)
 	rand.Read(seed)
+	var m [32]byte
+	rand.Read(m[:])
 	dk, err := NewDecapsulationKey768(seed)
 	if err != nil {
 		b.Fatal(err)
@@ -247,7 +244,7 @@ func BenchmarkEncaps(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		K, c := ek.Encapsulate()
+		K, c := ek.key.EncapsulateInternal(&m)
 		sink ^= c[0] ^ K[0]
 	}
 }

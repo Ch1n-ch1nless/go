@@ -272,14 +272,11 @@ func process(sig os.Signal) {
 // the returned context. Future interrupts received will not trigger the default
 // (exit) behavior until the returned stop function is called.
 //
-// If a signal causes the returned context to be canceled, calling
-// [context.Cause] on it will return an error describing the signal.
-//
 // The stop function releases resources associated with it, so code should
 // call stop as soon as the operations running in this Context complete and
 // signals no longer need to be diverted to the context.
 func NotifyContext(parent context.Context, signals ...os.Signal) (ctx context.Context, stop context.CancelFunc) {
-	ctx, cancel := context.WithCancelCause(parent)
+	ctx, cancel := context.WithCancel(parent)
 	c := &signalCtx{
 		Context: ctx,
 		cancel:  cancel,
@@ -290,8 +287,8 @@ func NotifyContext(parent context.Context, signals ...os.Signal) (ctx context.Co
 	if ctx.Err() == nil {
 		go func() {
 			select {
-			case s := <-c.ch:
-				c.cancel(signalError(s.String() + " signal received"))
+			case <-c.ch:
+				c.cancel()
 			case <-c.Done():
 			}
 		}()
@@ -302,13 +299,13 @@ func NotifyContext(parent context.Context, signals ...os.Signal) (ctx context.Co
 type signalCtx struct {
 	context.Context
 
-	cancel  context.CancelCauseFunc
+	cancel  context.CancelFunc
 	signals []os.Signal
 	ch      chan os.Signal
 }
 
 func (c *signalCtx) stop() {
-	c.cancel(nil)
+	c.cancel()
 	Stop(c.ch)
 }
 
@@ -335,10 +332,4 @@ func (c *signalCtx) String() string {
 	}
 	buf = append(buf, ')')
 	return string(buf)
-}
-
-type signalError string
-
-func (s signalError) Error() string {
-	return string(s)
 }

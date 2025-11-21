@@ -36,7 +36,6 @@ type gobCallee struct {
 	// results of type analysis (does not reach go/types data structures)
 	PkgPath          string                 // package path of declaring package
 	Name             string                 // user-friendly name for error messages
-	GoVersion        string                 // version of Go effective in callee file
 	Unexported       []string               // names of free objects that are unexported
 	FreeRefs         []freeRef              // locations of references to free objects
 	FreeObjs         []object               // descriptions of free objects
@@ -113,24 +112,6 @@ func AnalyzeCallee(logf func(string, ...any), fset *token.FileSet, pkg *types.Pa
 
 	if decl.Body == nil {
 		return nil, fmt.Errorf("cannot inline function %s as it has no body", name)
-	}
-
-	// Record the file's Go goVersion so that we don't
-	// inline newer code into file using an older dialect.
-	//
-	// Using the file version is overly conservative.
-	// A more precise solution would be for the type checker to
-	// record which language features the callee actually needs;
-	// see https://go.dev/issue/75726.
-	//
-	// We don't have the ast.File handy, so instead of a
-	// lookup we must scan the entire FileVersions map.
-	var goVersion string
-	for file, v := range info.FileVersions {
-		if file.Pos() < decl.Pos() && decl.Pos() < file.End() {
-			goVersion = v
-			break
-		}
 	}
 
 	// Record the location of all free references in the FuncDecl.
@@ -361,7 +342,6 @@ func AnalyzeCallee(logf func(string, ...any), fset *token.FileSet, pkg *types.Pa
 		Content:          content,
 		PkgPath:          pkg.Path(),
 		Name:             name,
-		GoVersion:        goVersion,
 		Unexported:       unexported,
 		FreeObjs:         freeObjs,
 		FreeRefs:         freeRefs,
@@ -441,11 +421,11 @@ func analyzeParams(logf func(string, ...any), fset *token.FileSet, info *types.I
 		if sig.Recv() != nil {
 			params = append(params, newParamInfo(sig.Recv(), false))
 		}
-		for v := range sig.Params().Variables() {
-			params = append(params, newParamInfo(v, false))
+		for i := 0; i < sig.Params().Len(); i++ {
+			params = append(params, newParamInfo(sig.Params().At(i), false))
 		}
-		for v := range sig.Results().Variables() {
-			results = append(results, newParamInfo(v, true))
+		for i := 0; i < sig.Results().Len(); i++ {
+			results = append(results, newParamInfo(sig.Results().At(i), true))
 		}
 	}
 
@@ -517,8 +497,8 @@ func analyzeTypeParams(_ logger, fset *token.FileSet, info *types.Info, decl *as
 	paramInfos := make(map[*types.TypeName]*paramInfo)
 	var params []*paramInfo
 	collect := func(tpl *types.TypeParamList) {
-		for tparam := range tpl.TypeParams() {
-			typeName := tparam.Obj()
+		for i := range tpl.Len() {
+			typeName := tpl.At(i).Obj()
 			info := &paramInfo{Name: typeName.Name()}
 			params = append(params, info)
 			paramInfos[typeName] = info
@@ -659,7 +639,8 @@ func analyzeAssignment(info *types.Info, stack []ast.Node) (assignable, ifaceAss
 				return true, types.IsInterface(under.Elem()), false
 			case *types.Struct: // Struct{k: expr}
 				if id, _ := kv.Key.(*ast.Ident); id != nil {
-					for field := range under.Fields() {
+					for fi := range under.NumFields() {
+						field := under.Field(fi)
 						if info.Uses[id] == field {
 							return true, types.IsInterface(field.Type()), false
 						}

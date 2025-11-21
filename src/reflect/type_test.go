@@ -12,7 +12,7 @@ import (
 func TestTypeFor(t *testing.T) {
 	type (
 		mystring string
-		myiface  any
+		myiface  interface{}
 	)
 
 	testcases := []struct {

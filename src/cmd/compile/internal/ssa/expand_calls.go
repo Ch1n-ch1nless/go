@@ -423,14 +423,7 @@ func (x *expandState) decomposeAsNecessary(pos src.XPos, b *Block, a, m0 *Value,
 		if a.Op == OpIMake {
 			data := a.Args[1]
 			for data.Op == OpStructMake || data.Op == OpArrayMake1 {
-				// A struct make might have a few zero-sized fields.
-				// Use the pointer-y one we know is there.
-				for _, a := range data.Args {
-					if a.Type.Size() > 0 {
-						data = a
-						break
-					}
-				}
+				data = data.Args[0]
 			}
 			return x.decomposeAsNecessary(pos, b, data, mem, rc.next(data.Type))
 		}
@@ -958,7 +951,7 @@ func (x *expandState) indent(n int) {
 }
 
 // Printf does an indented fmt.Printf on the format and args.
-func (x *expandState) Printf(format string, a ...any) (n int, err error) {
+func (x *expandState) Printf(format string, a ...interface{}) (n int, err error) {
 	if x.indentLevel > 0 {
 		fmt.Printf("%[1]*s", x.indentLevel, "")
 	}

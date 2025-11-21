@@ -460,7 +460,7 @@ func pkgFilenames(dir string, includeTest bool) ([]string, error) {
 	return filenames, nil
 }
 
-func walkPkgDirs(dir string, pkgh func(dir string, filenames []string), errh func(args ...any)) {
+func walkPkgDirs(dir string, pkgh func(dir string, filenames []string), errh func(args ...interface{})) {
 	w := walker{pkgh, errh}
 	w.walk(dir)
 }

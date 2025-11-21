@@ -36,13 +36,13 @@ type ValHeap struct {
 func (h ValHeap) Len() int      { return len(h.a) }
 func (h ValHeap) Swap(i, j int) { a := h.a; a[i], a[j] = a[j], a[i] }
 
-func (h *ValHeap) Push(x any) {
+func (h *ValHeap) Push(x interface{}) {
 	// Push and Pop use pointer receivers because they modify the slice's length,
 	// not just its contents.
 	v := x.(*Value)
 	h.a = append(h.a, v)
 }
-func (h *ValHeap) Pop() any {
+func (h *ValHeap) Pop() interface{} {
 	old := h.a
 	n := len(old)
 	x := old[n-1]

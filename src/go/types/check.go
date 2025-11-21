@@ -191,13 +191,12 @@ type Checker struct {
 	usedPkgNames  map[*PkgName]bool         // set of used package names
 	mono          monoGraph                 // graph for detecting non-monomorphizable instantiation loops
 
-	firstErr   error                 // first error encountered
-	methods    map[*TypeName][]*Func // maps package scope type names to associated non-blank (non-interface) methods
-	untyped    map[ast.Expr]exprInfo // map of expressions without final type
-	delayed    []action              // stack of delayed action segments; segments are processed in FIFO order
-	objPath    []Object              // path of object dependencies during type-checking (for cycle reporting)
-	objPathIdx map[Object]int        // map of object to object path index during type-checking (for cycle reporting)
-	cleaners   []cleaner             // list of types that may need a final cleanup at the end of type-checking
+	firstErr error                 // first error encountered
+	methods  map[*TypeName][]*Func // maps package scope type names to associated non-blank (non-interface) methods
+	untyped  map[ast.Expr]exprInfo // map of expressions without final type
+	delayed  []action              // stack of delayed action segments; segments are processed in FIFO order
+	objPath  []Object              // path of object dependencies during type inference (for cycle reporting)
+	cleaners []cleaner             // list of types that may need a final cleanup at the end of type-checking
 
 	// environment within which the current object is type-checked (valid only
 	// for the duration of type-checking a specific object)
@@ -269,22 +268,19 @@ func (check *Checker) later(f func()) *action {
 	return &check.delayed[i]
 }
 
-// push pushes obj onto the object path and records its index in the path index map.
-func (check *Checker) push(obj Object) {
-	if check.objPathIdx == nil {
-		check.objPathIdx = make(map[Object]int)
-	}
-	check.objPathIdx[obj] = len(check.objPath)
+// push pushes obj onto the object path and returns its index in the path.
+func (check *Checker) push(obj Object) int {
 	check.objPath = append(check.objPath, obj)
+	return len(check.objPath) - 1
 }
 
-// pop pops an object from the object path and removes it from the path index map.
-func (check *Checker) pop() {
+// pop pops and returns the topmost object from the object path.
+func (check *Checker) pop() Object {
 	i := len(check.objPath) - 1
 	obj := check.objPath[i]
-	check.objPath[i] = nil // help the garbage collector
+	check.objPath[i] = nil
 	check.objPath = check.objPath[:i]
-	delete(check.objPathIdx, obj)
+	return obj
 }
 
 type cleaner interface {
@@ -347,7 +343,6 @@ func (check *Checker) initFiles(files []*ast.File) {
 	check.untyped = nil
 	check.delayed = nil
 	check.objPath = nil
-	check.objPathIdx = nil
 	check.cleaners = nil
 
 	// We must initialize usedVars and usedPkgNames both here and in NewChecker,
@@ -526,9 +521,6 @@ func (check *Checker) checkFiles(files []*ast.File) {
 
 	print("== sortObjects ==")
 	check.sortObjects()
-
-	print("== directCycles ==")
-	check.directCycles()
 
 	print("== packageObjects ==")
 	check.packageObjects()

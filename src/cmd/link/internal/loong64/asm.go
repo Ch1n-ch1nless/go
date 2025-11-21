@@ -85,8 +85,7 @@ func adddynrel(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, s loade
 		}
 		return true
 
-	case objabi.ElfRelocOffset + objabi.RelocType(elf.R_LARCH_B26),
-		objabi.ElfRelocOffset + objabi.RelocType(elf.R_LARCH_CALL36):
+	case objabi.ElfRelocOffset + objabi.RelocType(elf.R_LARCH_B26):
 		if targType == sym.SDYNIMPORT {
 			addpltsym(target, ldr, syms, targ)
 			su := ldr.MakeSymbolUpdater(s)
@@ -96,12 +95,8 @@ func adddynrel(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, s loade
 		if targType == 0 || targType == sym.SXREF {
 			ldr.Errorf(s, "unknown symbol %s in callloong64", ldr.SymName(targ))
 		}
-		relocType := objabi.R_CALLLOONG64
-		if r.Type() == objabi.ElfRelocOffset+objabi.RelocType(elf.R_LARCH_CALL36) {
-			relocType = objabi.R_LOONG64_CALL36
-		}
 		su := ldr.MakeSymbolUpdater(s)
-		su.SetRelocType(rIdx, relocType)
+		su.SetRelocType(rIdx, objabi.R_CALLLOONG64)
 		return true
 
 	case objabi.ElfRelocOffset + objabi.RelocType(elf.R_LARCH_GOT_PC_HI20),
@@ -122,8 +117,7 @@ func adddynrel(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, s loade
 		return true
 
 	case objabi.ElfRelocOffset + objabi.RelocType(elf.R_LARCH_PCALA_HI20),
-		objabi.ElfRelocOffset + objabi.RelocType(elf.R_LARCH_PCALA_LO12),
-		objabi.ElfRelocOffset + objabi.RelocType(elf.R_LARCH_PCREL20_S2):
+		objabi.ElfRelocOffset + objabi.RelocType(elf.R_LARCH_PCALA_LO12):
 		if targType == sym.SDYNIMPORT {
 			ldr.Errorf(s, "unexpected relocation for dynamic symbol %s", ldr.SymName(targ))
 		}
@@ -131,17 +125,12 @@ func adddynrel(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, s loade
 			ldr.Errorf(s, "unknown symbol %s", ldr.SymName(targ))
 		}
 
-		var relocType objabi.RelocType
-		switch r.Type() - objabi.ElfRelocOffset {
-		case objabi.RelocType(elf.R_LARCH_PCALA_HI20):
-			relocType = objabi.R_LOONG64_ADDR_HI
-		case objabi.RelocType(elf.R_LARCH_PCALA_LO12):
-			relocType = objabi.R_LOONG64_ADDR_LO
-		case objabi.RelocType(elf.R_LARCH_PCREL20_S2):
-			relocType = objabi.R_LOONG64_ADDR_PCREL20_S2
-		}
 		su := ldr.MakeSymbolUpdater(s)
-		su.SetRelocType(rIdx, relocType)
+		if r.Type() == objabi.ElfRelocOffset+objabi.RelocType(elf.R_LARCH_PCALA_HI20) {
+			su.SetRelocType(rIdx, objabi.R_LOONG64_ADDR_HI)
+		} else {
+			su.SetRelocType(rIdx, objabi.R_LOONG64_ADDR_LO)
+		}
 		return true
 
 	case objabi.ElfRelocOffset + objabi.RelocType(elf.R_LARCH_ADD64),
@@ -429,11 +418,6 @@ func elfreloc1(ctxt *ld.Link, out *ld.OutBuf, ldr *loader.Loader, s loader.Sym, 
 		out.Write64(uint64(elf.R_LARCH_B26) | uint64(elfsym)<<32)
 		out.Write64(uint64(r.Xadd))
 
-	case objabi.R_LOONG64_CALL36:
-		out.Write64(uint64(sectoff))
-		out.Write64(uint64(elf.R_LARCH_CALL36) | uint64(elfsym)<<32)
-		out.Write64(uint64(r.Xadd))
-
 	case objabi.R_LOONG64_TLS_IE_HI:
 		out.Write64(uint64(sectoff))
 		out.Write64(uint64(elf.R_LARCH_TLS_IE_PC_HI20) | uint64(elfsym)<<32)
@@ -452,11 +436,6 @@ func elfreloc1(ctxt *ld.Link, out *ld.OutBuf, ldr *loader.Loader, s loader.Sym, 
 	case objabi.R_LOONG64_ADDR_HI:
 		out.Write64(uint64(sectoff))
 		out.Write64(uint64(elf.R_LARCH_PCALA_HI20) | uint64(elfsym)<<32)
-		out.Write64(uint64(r.Xadd))
-
-	case objabi.R_LOONG64_ADDR_PCREL20_S2:
-		out.Write64(uint64(sectoff))
-		out.Write64(uint64(elf.R_LARCH_PCREL20_S2) | uint64(elfsym)<<32)
 		out.Write64(uint64(r.Xadd))
 
 	case objabi.R_LOONG64_GOT_HI:
@@ -484,8 +463,7 @@ func archreloc(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, r loade
 		default:
 			return val, 0, false
 		case objabi.R_LOONG64_ADDR_HI,
-			objabi.R_LOONG64_ADDR_LO,
-			objabi.R_LOONG64_ADDR_PCREL20_S2:
+			objabi.R_LOONG64_ADDR_LO:
 			// set up addend for eventual relocation via outer symbol.
 			rs, _ := ld.FoldSubSymbolOffset(ldr, rs)
 			rst := ldr.SymType(rs)
@@ -496,7 +474,6 @@ func archreloc(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, r loade
 		case objabi.R_LOONG64_TLS_LE_HI,
 			objabi.R_LOONG64_TLS_LE_LO,
 			objabi.R_CALLLOONG64,
-			objabi.R_LOONG64_CALL36,
 			objabi.R_JMPLOONG64,
 			objabi.R_LOONG64_TLS_IE_HI,
 			objabi.R_LOONG64_TLS_IE_LO,
@@ -522,10 +499,6 @@ func archreloc(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, r loade
 			return val&0xffc003ff | (t << 10), noExtReloc, isOk
 		}
 		return val&0xfe00001f | (t << 5), noExtReloc, isOk
-	case objabi.R_LOONG64_ADDR_PCREL20_S2:
-		pc := ldr.SymValue(s) + int64(r.Off())
-		t := (ldr.SymAddr(rs) + r.Add() - pc) >> 2
-		return val&0xfe00001f | ((t & 0xfffff) << 5), noExtReloc, isOk
 	case objabi.R_LOONG64_TLS_LE_HI,
 		objabi.R_LOONG64_TLS_LE_LO:
 		t := ldr.SymAddr(rs) + r.Add()
@@ -538,14 +511,6 @@ func archreloc(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, r loade
 		pc := ldr.SymValue(s) + int64(r.Off())
 		t := ldr.SymAddr(rs) + r.Add() - pc
 		return val&0xfc000000 | (((t >> 2) & 0xffff) << 10) | (((t >> 2) & 0x3ff0000) >> 16), noExtReloc, isOk
-
-	case objabi.R_LOONG64_CALL36:
-		pc := ldr.SymValue(s) + int64(r.Off())
-		t := (ldr.SymAddr(rs) + r.Add() - pc) >> 2
-		// val is pcaddu18i (lower half) + jirl (upper half)
-		pcaddu18i := (val & 0xfe00001f) | (((t + 0x8000) >> 16) << 5)
-		jirl := ((val >> 32) & 0xfc0003ff) | ((t & 0xffff) << 10)
-		return pcaddu18i | (jirl << 32), noExtReloc, isOk
 
 	case objabi.R_JMP16LOONG64,
 		objabi.R_JMP21LOONG64:

@@ -4,8 +4,6 @@
 
 package main
 
-import "sync"
-
 type MyBool bool
 type MyComplex128 complex128
 type MyComplex64 complex64
@@ -92,23 +90,6 @@ func panicCustomFloat32() {
 	panic(MyFloat32(-93.70))
 }
 
-func panicDeferFatal() {
-	var mu sync.Mutex
-	defer mu.Unlock()
-	var i *int
-	*i = 0
-}
-
-func panicDoublieDeferFatal() {
-	var mu sync.Mutex
-	defer mu.Unlock()
-	defer func() {
-		panic(recover())
-	}()
-	var i *int
-	*i = 0
-}
-
 func init() {
 	register("panicCustomComplex64", panicCustomComplex64)
 	register("panicCustomComplex128", panicCustomComplex128)
@@ -127,6 +108,4 @@ func init() {
 	register("panicCustomUint32", panicCustomUint32)
 	register("panicCustomUint64", panicCustomUint64)
 	register("panicCustomUintptr", panicCustomUintptr)
-	register("panicDeferFatal", panicDeferFatal)
-	register("panicDoublieDeferFatal", panicDoublieDeferFatal)
 }

@@ -9,7 +9,6 @@ package signal
 import (
 	"bytes"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"internal/testenv"
@@ -724,9 +723,6 @@ func TestNotifyContextNotifications(t *testing.T) {
 		}
 		wg.Wait()
 		<-ctx.Done()
-		if got, want := context.Cause(ctx).Error(), "interrupt signal received"; got != want {
-			t.Errorf("context.Cause(ctx) = %q, want %q", got, want)
-		}
 		fmt.Println("received SIGINT")
 		// Sleep to give time to simultaneous signals to reach the process.
 		// These signals must be ignored given stop() is not called on this code.
@@ -801,15 +797,11 @@ func TestNotifyContextStop(t *testing.T) {
 	if got := c.Err(); got != context.Canceled {
 		t.Errorf("c.Err() = %q, want %q", got, context.Canceled)
 	}
-	if got := context.Cause(c); got != context.Canceled {
-		t.Errorf("context.Cause(c.Err()) = %q, want %q", got, context.Canceled)
-	}
 }
 
 func TestNotifyContextCancelParent(t *testing.T) {
-	parent, cancelParent := context.WithCancelCause(context.Background())
-	parentCause := errors.New("parent canceled")
-	defer cancelParent(parentCause)
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
 	c, stop := NotifyContext(parent, syscall.SIGINT)
 	defer stop()
 
@@ -817,22 +809,18 @@ func TestNotifyContextCancelParent(t *testing.T) {
 		t.Errorf("c.String() = %q, want %q", got, want)
 	}
 
-	cancelParent(parentCause)
+	cancelParent()
 	<-c.Done()
 	if got := c.Err(); got != context.Canceled {
 		t.Errorf("c.Err() = %q, want %q", got, context.Canceled)
-	}
-	if got := context.Cause(c); got != parentCause {
-		t.Errorf("context.Cause(c) = %q, want %q", got, parentCause)
 	}
 }
 
 func TestNotifyContextPrematureCancelParent(t *testing.T) {
-	parent, cancelParent := context.WithCancelCause(context.Background())
-	parentCause := errors.New("parent canceled")
-	defer cancelParent(parentCause)
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
 
-	cancelParent(parentCause) // Prematurely cancel context before calling NotifyContext.
+	cancelParent() // Prematurely cancel context before calling NotifyContext.
 	c, stop := NotifyContext(parent, syscall.SIGINT)
 	defer stop()
 
@@ -843,9 +831,6 @@ func TestNotifyContextPrematureCancelParent(t *testing.T) {
 	<-c.Done()
 	if got := c.Err(); got != context.Canceled {
 		t.Errorf("c.Err() = %q, want %q", got, context.Canceled)
-	}
-	if got := context.Cause(c); got != parentCause {
-		t.Errorf("context.Cause(c) = %q, want %q", got, parentCause)
 	}
 }
 

@@ -183,7 +183,7 @@ var BasicTypeNames = []string{
 }
 
 var fmtBufferPool = sync.Pool{
-	New: func() any {
+	New: func() interface{} {
 		return new(bytes.Buffer)
 	},
 }

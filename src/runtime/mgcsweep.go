@@ -885,7 +885,7 @@ func (s *mspan) reportZombies() {
 			if length > 1024 {
 				length = 1024
 			}
-			hexdumpWords(addr, length, nil)
+			hexdumpWords(addr, addr+length, nil)
 		}
 		mbits.advance()
 		abits.advance()

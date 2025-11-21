@@ -45,11 +45,3 @@ func Any[T any](seq iter.Seq[T], pred func(T) bool) bool {
 	}
 	return false
 }
-
-// Len returns the number of elements in the sequence (by iterating).
-func Len[T any](seq iter.Seq[T]) (n int) {
-	for range seq {
-		n++
-	}
-	return
-}

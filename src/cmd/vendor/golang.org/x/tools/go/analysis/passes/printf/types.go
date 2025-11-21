@@ -204,7 +204,8 @@ func (m *argMatcher) match(typ types.Type, topLevel bool) bool {
 	case *types.Struct:
 		// report whether all the elements of the struct match the expected type. For
 		// instance, with "%d" all the elements must be printable with the "%d" format.
-		for typf := range typ.Fields() {
+		for i := 0; i < typ.NumFields(); i++ {
+			typf := typ.Field(i)
 			if !m.match(typf.Type(), false) {
 				return false
 			}
@@ -227,20 +228,14 @@ func (m *argMatcher) match(typ types.Type, topLevel bool) bool {
 			types.Bool:
 			return m.t&argBool != 0
 
-		case types.Byte:
-			return m.t&(argInt|argByte) != 0
-
-		case types.Rune, types.UntypedRune:
-			return m.t&(argInt|argRune) != 0
-
 		case types.UntypedInt,
 			types.Int,
 			types.Int8,
 			types.Int16,
-			// see case Rune for int32
+			types.Int32,
 			types.Int64,
 			types.Uint,
-			// see case Byte for uint8
+			types.Uint8,
 			types.Uint16,
 			types.Uint32,
 			types.Uint64,
@@ -263,6 +258,9 @@ func (m *argMatcher) match(typ types.Type, topLevel bool) bool {
 
 		case types.UnsafePointer:
 			return m.t&(argPointer|argInt) != 0
+
+		case types.UntypedRune:
+			return m.t&(argInt|argRune) != 0
 
 		case types.UntypedNil:
 			return false

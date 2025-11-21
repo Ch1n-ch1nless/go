@@ -19,18 +19,14 @@ static void callback() {
 */
 import "C"
 
-func EmptyC() {
+func Empty() {
 	C.empty()
 }
 
-func CallbackC() {
+func Callback() {
 	C.callback()
 }
 
 //export go_empty_callback
 func go_empty_callback() {
-}
-
-//go:noinline
-func Empty() {
 }

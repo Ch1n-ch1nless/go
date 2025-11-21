@@ -12,7 +12,7 @@ import (
 	"go/types"
 
 	"golang.org/x/tools/go/analysis"
-	typeindexanalyzer "golang.org/x/tools/internal/analysis/typeindex"
+	typeindexanalyzer "golang.org/x/tools/internal/analysisinternal/typeindex"
 	"golang.org/x/tools/internal/typesinternal/typeindex"
 )
 

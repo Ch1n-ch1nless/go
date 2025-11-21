@@ -1,4 +1,4 @@
-[!git-sha256] skip
+[!git-min-vers:v2.29] skip
 
 handle git
 

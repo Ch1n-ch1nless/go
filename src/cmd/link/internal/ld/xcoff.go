@@ -167,7 +167,8 @@ const (
 )
 
 // Type representing all XCOFF symbols.
-type xcoffSym any
+type xcoffSym interface {
+}
 
 // Symbol Table Entry
 type XcoffSymEnt64 struct {

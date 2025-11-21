@@ -21,7 +21,7 @@ import (
 
 // pathf is fmt.Sprintf for generating paths
 // (on windows it turns / into \ after the printf).
-func pathf(format string, args ...any) string {
+func pathf(format string, args ...interface{}) string {
 	return filepath.Clean(fmt.Sprintf(format, args...))
 }
 
@@ -324,7 +324,7 @@ func xworkdir() string {
 }
 
 // fatalf prints an error message to standard error and exits.
-func fatalf(format string, args ...any) {
+func fatalf(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "go tool dist: %s\n", fmt.Sprintf(format, args...))
 
 	dieOnce.Do(func() { close(dying) })
@@ -353,12 +353,12 @@ func xatexit(f func()) {
 }
 
 // xprintf prints a message to standard output.
-func xprintf(format string, args ...any) {
+func xprintf(format string, args ...interface{}) {
 	fmt.Printf(format, args...)
 }
 
 // errprintf prints a message to standard output.
-func errprintf(format string, args ...any) {
+func errprintf(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, format, args...)
 }
 

@@ -14,16 +14,16 @@ import (
 
 // RangeInStringLiteral calculates the positional range within a string literal
 // corresponding to the specified start and end byte offsets within the logical string.
-func RangeInStringLiteral(lit *ast.BasicLit, start, end int) (Range, error) {
+func RangeInStringLiteral(lit *ast.BasicLit, start, end int) (token.Pos, token.Pos, error) {
 	startPos, err := PosInStringLiteral(lit, start)
 	if err != nil {
-		return Range{}, fmt.Errorf("start: %v", err)
+		return 0, 0, fmt.Errorf("start: %v", err)
 	}
 	endPos, err := PosInStringLiteral(lit, end)
 	if err != nil {
-		return Range{}, fmt.Errorf("end: %v", err)
+		return 0, 0, fmt.Errorf("end: %v", err)
 	}
-	return Range{startPos, endPos}, nil
+	return startPos, endPos, nil
 }
 
 // PosInStringLiteral returns the position within a string literal

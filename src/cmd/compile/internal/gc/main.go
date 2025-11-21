@@ -22,7 +22,6 @@ import (
 	"cmd/compile/internal/pkginit"
 	"cmd/compile/internal/reflectdata"
 	"cmd/compile/internal/rttype"
-	"cmd/compile/internal/slice"
 	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/ssagen"
 	"cmd/compile/internal/staticinit"
@@ -266,8 +265,6 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	// because large values may contain pointers, it must happen early.
 	base.Timer.Start("fe", "escapes")
 	escape.Funcs(typecheck.Target.Funcs)
-
-	slice.Funcs(typecheck.Target.Funcs)
 
 	loopvar.LogTransformations(transformed)
 

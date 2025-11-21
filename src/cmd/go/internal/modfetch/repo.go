@@ -184,6 +184,11 @@ type RevInfo struct {
 // To avoid version control access except when absolutely necessary,
 // Lookup does not attempt to connect to the repository itself.
 
+// The Lookup cache is used cache the work done by Lookup.
+// It is important that the global functions of this package that access it do not
+// do so after they return.
+var lookupCache = new(par.Cache[lookupCacheKey, Repo])
+
 type lookupCacheKey struct {
 	proxy, path string
 }
@@ -205,7 +210,7 @@ func Lookup(ctx context.Context, proxy, path string) Repo {
 		defer logCall("Lookup(%q, %q)", proxy, path)()
 	}
 
-	return ModuleFetchState.lookupCache.Do(lookupCacheKey{proxy, path}, func() Repo {
+	return lookupCache.Do(lookupCacheKey{proxy, path}, func() Repo {
 		return newCachingRepo(ctx, path, func(ctx context.Context) (Repo, error) {
 			r, err := lookup(ctx, proxy, path)
 			if err == nil && traceRepo {

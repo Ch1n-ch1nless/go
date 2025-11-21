@@ -18,7 +18,6 @@ package url
 import (
 	"errors"
 	"fmt"
-	"internal/godebug"
 	"net/netip"
 	"path"
 	"slices"
@@ -26,8 +25,6 @@ import (
 	"strings"
 	_ "unsafe" // for linkname
 )
-
-var urlstrictcolons = godebug.New("urlstrictcolons")
 
 // Error reports an error and the operation and URL that caused it.
 type Error struct {
@@ -489,7 +486,7 @@ func parse(rawURL string, viaRequest bool) (*URL, error) {
 		if i := strings.Index(authority, "/"); i >= 0 {
 			authority, rest = authority[:i], authority[i:]
 		}
-		url.User, url.Host, err = parseAuthority(url.Scheme, authority)
+		url.User, url.Host, err = parseAuthority(authority)
 		if err != nil {
 			return nil, err
 		}
@@ -509,12 +506,12 @@ func parse(rawURL string, viaRequest bool) (*URL, error) {
 	return url, nil
 }
 
-func parseAuthority(scheme, authority string) (user *Userinfo, host string, err error) {
+func parseAuthority(authority string) (user *Userinfo, host string, err error) {
 	i := strings.LastIndex(authority, "@")
 	if i < 0 {
-		host, err = parseHost(scheme, authority)
+		host, err = parseHost(authority)
 	} else {
-		host, err = parseHost(scheme, authority[i+1:])
+		host, err = parseHost(authority[i+1:])
 	}
 	if err != nil {
 		return nil, "", err
@@ -546,7 +543,7 @@ func parseAuthority(scheme, authority string) (user *Userinfo, host string, err 
 
 // parseHost parses host as an authority without user
 // information. That is, as host[:port].
-func parseHost(scheme, host string) (string, error) {
+func parseHost(host string) (string, error) {
 	if openBracketIdx := strings.LastIndex(host, "["); openBracketIdx != -1 {
 		// Parse an IP-Literal in RFC 3986 and RFC 6874.
 		// E.g., "[fe80::1]", "[fe80::1%25en0]", "[fe80::1]:80".
@@ -602,24 +599,7 @@ func parseHost(scheme, host string) (string, error) {
 			return "", errors.New("invalid IP-literal")
 		}
 		return "[" + unescapedHostname + "]" + unescapedColonPort, nil
-	} else if i := strings.Index(host, ":"); i != -1 {
-		lastColon := strings.LastIndex(host, ":")
-		if lastColon != i {
-			if scheme == "postgresql" || scheme == "postgres" {
-				// PostgreSQL relies on non-RFC-3986 parsing to accept
-				// a comma-separated list of hosts (with optional ports)
-				// in the host subcomponent:
-				// https://www.postgresql.org/docs/11/libpq-connect.html#LIBPQ-MULTIPLE-HOSTS
-				//
-				// Since we historically permitted colons to appear in the host,
-				// continue to permit it for postgres:// URLs only.
-				// https://go.dev/issue/75223
-				i = lastColon
-			} else if urlstrictcolons.Value() == "0" {
-				urlstrictcolons.IncNonDefault()
-				i = lastColon
-			}
-		}
+	} else if i := strings.LastIndex(host, ":"); i != -1 {
 		colonPort := host[i:]
 		if !validOptionalPort(colonPort) {
 			return "", fmt.Errorf("invalid port %q after host", colonPort)

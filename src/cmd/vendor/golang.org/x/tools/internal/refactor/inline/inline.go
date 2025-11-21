@@ -24,11 +24,9 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/go/types/typeutil"
 	internalastutil "golang.org/x/tools/internal/astutil"
-	"golang.org/x/tools/internal/astutil/free"
 	"golang.org/x/tools/internal/packagepath"
 	"golang.org/x/tools/internal/typeparams"
 	"golang.org/x/tools/internal/typesinternal"
-	"golang.org/x/tools/internal/versions"
 )
 
 // A Caller describes the function call and its enclosing context.
@@ -40,11 +38,7 @@ type Caller struct {
 	Info    *types.Info
 	File    *ast.File
 	Call    *ast.CallExpr
-	Content []byte // source of file containing (TODO(adonovan): see comment at Result.Content)
-
-	// CountUses is an optional optimized computation of
-	// the number of times pkgname appears in Info.Uses.
-	CountUses func(pkgname *types.PkgName) int
+	Content []byte // source of file containing
 
 	path          []ast.Node    // path from call to root of file syntax tree
 	enclosingFunc *ast.FuncDecl // top-level function/method enclosing the call, if any
@@ -61,18 +55,6 @@ type Options struct {
 
 // Result holds the result of code transformation.
 type Result struct {
-	// TODO(adonovan): the only textual results that should be
-	// needed are (1) an edit in the vicinity of the call (either
-	// to the CallExpr or one of its ancestors), and optionally
-	// (2) an edit to the import declaration.
-	// Change the inliner API to return a list of edits,
-	// and not to accept a Caller.Content, as it is only
-	// temptation to use such algorithmically expensive
-	// operations as reformatting the entire file, which is
-	// a significant source of non-linear dynamic behavior;
-	// see https://go.dev/issue/75773.
-	// This will require a sequence of changes to the tests
-	// and the inliner algorithm itself.
 	Content     []byte // formatted, transformed content of caller file
 	Literalized bool   // chosen strategy replaced callee() with func(){...}()
 	BindingDecl bool   // transformation added "var params = args" declaration
@@ -442,25 +424,10 @@ func newImportState(logf func(string, ...any), caller *Caller, callee *gobCallee
 	// For simplicity we ignore existing dot imports, so that a qualified
 	// identifier (QI) in the callee is always represented by a QI in the caller,
 	// allowing us to treat a QI like a selection on a package name.
-	ist := &importState{
+	is := &importState{
 		logf:      logf,
 		caller:    caller,
 		importMap: make(map[string][]string),
-	}
-
-	// Provide an inefficient default implementation of CountUses.
-	// (Ideally clients amortize this for the entire package.)
-	countUses := caller.CountUses
-	if countUses == nil {
-		uses := make(map[*types.PkgName]int)
-		for _, obj := range caller.Info.Uses {
-			if pkgname, ok := obj.(*types.PkgName); ok {
-				uses[pkgname]++
-			}
-		}
-		countUses = func(pkgname *types.PkgName) int {
-			return uses[pkgname]
-		}
 	}
 
 	for _, imp := range caller.File.Imports {
@@ -480,10 +447,8 @@ func newImportState(logf func(string, ...any), caller *Caller, callee *gobCallee
 			// If that is the case, proactively check if any of the callee FreeObjs
 			// need this import. Doing so eagerly simplifies the resulting logic.
 			needed := true
-			if sel, ok := ast.Unparen(caller.Call.Fun).(*ast.SelectorExpr); ok &&
-				is[*ast.Ident](sel.X) &&
-				caller.Info.Uses[sel.X.(*ast.Ident)] == pkgName &&
-				countUses(pkgName) == 1 {
+			sel, ok := ast.Unparen(caller.Call.Fun).(*ast.SelectorExpr)
+			if ok && soleUse(caller.Info, pkgName) == sel.X {
 				needed = false // no longer needed by caller
 				// Check to see if any of the inlined free objects need this package.
 				for _, obj := range callee.FreeObjs {
@@ -498,13 +463,13 @@ func newImportState(logf func(string, ...any), caller *Caller, callee *gobCallee
 			// return value holds these.
 			if needed {
 				path := pkgName.Imported().Path()
-				ist.importMap[path] = append(ist.importMap[path], pkgName.Name())
+				is.importMap[path] = append(is.importMap[path], pkgName.Name())
 			} else {
-				ist.oldImports = append(ist.oldImports, oldImport{pkgName: pkgName, spec: imp})
+				is.oldImports = append(is.oldImports, oldImport{pkgName: pkgName, spec: imp})
 			}
 		}
 	}
-	return ist
+	return is
 }
 
 // importName finds an existing import name to use in a particular shadowing
@@ -610,8 +575,9 @@ func (i *importState) localName(pkgPath, pkgName string, shadow shadowMap) strin
 // Since they are not relevant to removing unused imports, we instruct
 // freeishNames to omit composite-literal keys that are identifiers.
 func trimNewImports(newImports []newImport, new ast.Node) []newImport {
+	free := map[string]bool{}
 	const omitComplitIdents = false
-	free := free.Names(new, omitComplitIdents)
+	freeishNames(free, new, omitComplitIdents)
 	var res []newImport
 	for _, ni := range newImports {
 		if free[ni.pkgName] {
@@ -709,15 +675,6 @@ func (st *state) inlineCall() (*inlineCallResult, error) {
 	if !samePkg && len(callee.Unexported) > 0 {
 		return nil, fmt.Errorf("cannot inline call to %s because body refers to non-exported %s",
 			callee.Name, callee.Unexported[0])
-	}
-
-	// Reject cross-file inlining if callee requires a newer dialect of Go (#75726).
-	// (Versions default to types.Config.GoVersion, which is unset in many tests,
-	// though should be populated by an analysis driver.)
-	callerGoVersion := caller.Info.FileVersions[caller.File]
-	if callerGoVersion != "" && callee.GoVersion != "" && versions.Before(callerGoVersion, callee.GoVersion) {
-		return nil, fmt.Errorf("cannot inline call to %s (declared using %s) into a file using %s",
-			callee.Name, callee.GoVersion, callerGoVersion)
 	}
 
 	// -- analyze callee's free references in caller context --
@@ -2062,7 +2019,7 @@ func checkFalconConstraints(logf logger, params []*parameter, args []*argument, 
 		pkg.Scope().Insert(types.NewTypeName(token.NoPos, pkg, typ.Name, types.Typ[typ.Kind]))
 	}
 
-	// Declared constants and variables for parameters.
+	// Declared constants and variables for for parameters.
 	nconst := 0
 	for i, param := range params {
 		name := param.info.Name
@@ -2431,13 +2388,14 @@ func createBindingDecl(logf logger, caller *Caller, args []*argument, calleeDecl
 		// (caller syntax), so we can use type info.
 		// But Type is the untyped callee syntax,
 		// so we have to use a syntax-only algorithm.
-		const includeComplitIdents = true
-		free := free.Names(spec.Type, includeComplitIdents)
+		free := make(map[string]bool)
 		for _, value := range spec.Values {
 			for name := range freeVars(caller.Info, value) {
 				free[name] = true
 			}
 		}
+		const includeComplitIdents = true
+		freeishNames(free, spec.Type, includeComplitIdents)
 		for name := range free {
 			if names[name] {
 				logf("binding decl would shadow free name %q", name)
@@ -3498,7 +3456,7 @@ func (st *state) assignStmts(callerStmt *ast.AssignStmt, returnOperands []ast.Ex
 			assert(callIdx == -1, "malformed (duplicative) AST")
 			callIdx = i
 			for j, returnOperand := range returnOperands {
-				maps.Copy(freeNames, free.Names(returnOperand, includeComplitIdents))
+				freeishNames(freeNames, returnOperand, includeComplitIdents)
 				rhs = append(rhs, returnOperand)
 				if resultInfo[j]&nonTrivialResult != 0 {
 					nonTrivial[i+j] = true
@@ -3511,7 +3469,7 @@ func (st *state) assignStmts(callerStmt *ast.AssignStmt, returnOperands []ast.Ex
 			// We must clone before clearing positions, since e came from the caller.
 			expr = internalastutil.CloneNode(expr)
 			clearPositions(expr)
-			maps.Copy(freeNames, free.Names(expr, includeComplitIdents))
+			freeishNames(freeNames, expr, includeComplitIdents)
 			rhs = append(rhs, expr)
 		}
 	}
@@ -3767,6 +3725,20 @@ func hasNonTrivialReturn(returnInfo [][]returnOperandFlags) bool {
 		}
 	}
 	return false
+}
+
+// soleUse returns the ident that refers to obj, if there is exactly one.
+func soleUse(info *types.Info, obj types.Object) (sole *ast.Ident) {
+	// This is not efficient, but it is called infrequently.
+	for id, obj2 := range info.Uses {
+		if obj2 == obj {
+			if sole != nil {
+				return nil // not unique
+			}
+			sole = id
+		}
+	}
+	return sole
 }
 
 type unit struct{} // for representing sets as maps

@@ -113,8 +113,8 @@ type Flags struct {
 	// platforms.
 	RandomizedHeapBase64 bool
 
-	// RuntimeFreegc enables the runtime to free and reuse memory more eagerly in some circumstances with compiler help.
-	RuntimeFreegc bool
+	// RuntimeFree enables the runtime to free and reuse memory more eagerly in some circumstances with compiler help.
+	RuntimeFree bool
 
 	// SizeSpecializedMalloc enables malloc implementations that are specialized per size class.
 	SizeSpecializedMalloc bool

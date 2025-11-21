@@ -369,12 +369,11 @@ func pkeEncrypt1024(cc *[CiphertextSize1024]byte, ex *encryptionKey1024, m *[mes
 
 	u := make([]ringElement, k1024) // NTT⁻¹(AT ◦ r) + e1
 	for i := range u {
-		var uHat nttElement
+		u[i] = e1[i]
 		for j := range r {
 			// Note that i and j are inverted, as we need the transposed of A.
-			uHat = polyAdd(uHat, nttMul(ex.a[j*k1024+i], r[j]))
+			u[i] = polyAdd(u[i], inverseNTT(nttMul(ex.a[j*k1024+i], r[j])))
 		}
-		u[i] = polyAdd(e1[i], inverseNTT(uHat))
 	}
 
 	μ := ringDecodeAndDecompress1(m)

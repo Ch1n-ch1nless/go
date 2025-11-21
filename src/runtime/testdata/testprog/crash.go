@@ -22,7 +22,6 @@ func init() {
 	register("RepanickedPanic", RepanickedPanic)
 	register("RepanickedMiddlePanic", RepanickedMiddlePanic)
 	register("RepanickedPanicSandwich", RepanickedPanicSandwich)
-	register("DoublePanicWithSameValue", DoublePanicWithSameValue)
 }
 
 func test(name string) {
@@ -189,14 +188,4 @@ func RepanickedPanicSandwich() {
 		}()
 		panic("outer")
 	}()
-}
-
-// Double panic with same value and not recovered.
-// See issue 76099.
-func DoublePanicWithSameValue() {
-	var e any = "message"
-	defer func() {
-		panic(e)
-	}()
-	panic(e)
 }

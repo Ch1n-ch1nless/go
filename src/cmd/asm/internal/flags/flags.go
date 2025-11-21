@@ -29,9 +29,8 @@ var (
 )
 
 var DebugFlags struct {
-	CompressInstructions int    `help:"use compressed instructions when possible (if supported by architecture)"`
-	MayMoreStack         string `help:"call named function before all stack growth checks"`
-	PCTab                string `help:"print named pc-value table\nOne of: pctospadj, pctofile, pctoline, pctoinline, pctopcdata"`
+	MayMoreStack string `help:"call named function before all stack growth checks"`
+	PCTab        string `help:"print named pc-value table\nOne of: pctospadj, pctofile, pctoline, pctoinline, pctopcdata"`
 }
 
 var (
@@ -48,8 +47,6 @@ func init() {
 	flag.Var(objabi.NewDebugFlag(&DebugFlags, nil), "d", "enable debugging settings; try -d help")
 	objabi.AddVersionFlag() // -V
 	objabi.Flagcount("S", "print assembly and machine code", &PrintOut)
-
-	DebugFlags.CompressInstructions = 1
 }
 
 // MultiFlag allows setting a value multiple times to collect a list, as in -I=dir1 -I=dir2.

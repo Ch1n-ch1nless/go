@@ -236,7 +236,7 @@ var ArchRISCV64 = &Arch{
 	ByteOrder:      binary.LittleEndian,
 	PtrSize:        8,
 	RegSize:        8,
-	MinLC:          2,
+	MinLC:          4,
 	Alignment:      8, // riscv unaligned loads work, but are really slow (trap + simulated by OS)
 	CanMergeLoads:  false,
 	HasLR:          true,

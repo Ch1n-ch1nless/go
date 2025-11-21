@@ -138,17 +138,14 @@ func (g *threadGenerator) ProcTransition(ctx *traceContext, ev *trace.Event) {
 		}
 	}
 
+	type procArg struct {
+		Proc uint64 `json:"proc,omitempty"`
+	}
 	st := ev.StateTransition()
 	viewerEv := traceviewer.InstantEvent{
 		Resource: uint64(ev.Thread()),
 		Stack:    ctx.Stack(viewerFrames(ev.Stack())),
-
-		// Annotate with the thread and proc. The thread is redundant, but this is to
-		// stay consistent with the proc view.
-		Arg: format.SchedCtxArg{
-			ProcID:   uint64(st.Resource.Proc()),
-			ThreadID: uint64(ev.Thread()),
-		},
+		Arg:      procArg{Proc: uint64(st.Resource.Proc())},
 	}
 
 	from, to := st.Proc()
@@ -162,6 +159,7 @@ func (g *threadGenerator) ProcTransition(ctx *traceContext, ev *trace.Event) {
 			start = ctx.startTime
 		}
 		viewerEv.Name = "proc start"
+		viewerEv.Arg = format.ThreadIDArg{ThreadID: uint64(ev.Thread())}
 		viewerEv.Ts = ctx.elapsed(start)
 		// TODO(mknyszek): We don't have a state machine for threads, so approximate
 		// running threads with running Ps.
