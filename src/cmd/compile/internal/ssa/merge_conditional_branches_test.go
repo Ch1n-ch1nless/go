@@ -275,7 +275,7 @@ func TestNoCCMPWithPointerAndMemoryLoad(t *testing.T) {
 		}
 
 		// The optimization shouldn't merge these blocks because of the memory operation
-		if secondBlock.Kind == BlockPlain && len(secondBlock.Values) == 0 {
+		if secondBlock.Kind == BlockPlain {
 			t.Errorf("Block with memory load was incorrectly cleaned")
 		}
 	})

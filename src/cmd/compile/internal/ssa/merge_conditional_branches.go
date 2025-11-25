@@ -48,7 +48,7 @@ const (
 // Transformation Conditions:
 // - Both if1 and if2 must be ARM64 conditional blocks
 // - if2 must have exactly one predecessor from if1
-// - if2 must not contain memory operations, side effects, or phi nodes
+// - if2 must not contain memory operations or side effects
 // - The transformation must preserve phi node consistency in successor blocks
 //
 // This optimization eliminates branch mispredictions and improves instruction-level
@@ -70,8 +70,8 @@ func mergeConditionalBranches(f *Func) {
 	blocks := f.postorder()
 
 	for _, block := range blocks {
-		// extSuccIndex: Index of the external successor that contains the nested condition
-		// intSuccIndex: Index of the internal successor within the nested condition block
+		// extSuccIndex: index of the outedge from if1 to if2
+		// intSuccIndex: index of the outedge from if2 to b2
 		extSuccIndex, intSuccIndex := detectNestedIfPattern(block)
 
 		if extSuccIndex != InvalidIndex && intSuccIndex != InvalidIndex {
@@ -96,7 +96,7 @@ func findFirstNonEmptyPlainBlock(parentBlock *Block, childIndex int) *Block {
 // artifacts of previous optimizations and can be safely removed or bypassed.
 func isEmptyPlainBlock(block *Block) bool {
 	if block.Kind == BlockPlain && len(block.Values) == 0 &&
-		len(block.Preds) == 1 && len(block.Succs) == 1 {
+		len(block.Preds) == 1 {
 		return true
 	}
 	return false
@@ -201,11 +201,6 @@ func detectNestedIfPattern(extBlock *Block) (int, int) {
 	thenBlock = findFirstNonEmptyPlainBlock(intBlock, TrueConditionSuccIndex)
 	elseBlock = findFirstNonEmptyPlainBlock(intBlock, FalseConditionSuccIndex)
 
-	// Prevent infinite loops - if inner block refers to itself, transformation would break CFG
-	if intBlock == thenBlock || intBlock == elseBlock {
-		return InvalidIndex, InvalidIndex
-	}
-
 	// Determine which inner branch leads to the common merge point
 	// This identifies the logical operation type (AND/OR)
 	intSuccIndex := InvalidIndex
@@ -289,7 +284,8 @@ func checkSameValuesInPhiNodes(extBlock, intBlock *Block, extSuccIndex, intSuccI
 
 	// Both paths must lead to the same merge block for transformation to be valid
 	if extBlock.Succs[extSuccIndex].Block() != intBlock.Succs[intSuccIndex].Block() {
-		return false
+		// TODO: Fix the panic message!
+		panic("The invalid pointers to block!")
 	}
 
 	argIndex1 := extBlock.Succs[extSuccIndex].Index()
@@ -454,16 +450,16 @@ func moveAllValues(dest, src *Block) {
 func elimNestedBlock(b *Block, index int) {
 	removedEdge := b.Succs[index^1]
 
-	falseResultBlock := removedEdge.Block()
+	notBothMetBlock := removedEdge.Block()
 	i := removedEdge.Index()
 
 	b.removeSucc(index ^ 1)
-	falseResultBlock.removePred(i)
-	for _, v := range falseResultBlock.Values {
+	notBothMetBlock.removePred(i)
+	for _, v := range notBothMetBlock.Values {
 		if v.Op != OpPhi {
 			continue
 		}
-		falseResultBlock.removePhiArg(v, i)
+		notBothMetBlock.removePhiArg(v, i)
 	}
 
 	b.Func.invalidateCFG()
@@ -537,25 +533,28 @@ func transformDependentComparisonValue(block *Block) {
 		BlockARM64UGT,
 		BlockARM64UGE:
 		value := block.Controls[0]
-		arg0 := value.Args[0]
 
 		switch value.Op {
 		case OpARM64CMPconst:
+			arg0 := value.Args[0]
 			auxConstant := auxIntToInt64(value.AuxInt)
 			value.reset(OpARM64CMP)
 			constantValue := block.Func.constVal(OpARM64MOVDconst, typ.UInt64, auxConstant, true)
 			value.AddArg2(arg0, constantValue)
 		case OpARM64CMNconst:
+			arg0 := value.Args[0]
 			auxConstant := auxIntToInt64(value.AuxInt)
 			value.reset(OpARM64CMN)
 			constantValue := block.Func.constVal(OpARM64MOVDconst, typ.UInt64, auxConstant, true)
 			value.AddArg2(arg0, constantValue)
 		case OpARM64CMPWconst:
+			arg0 := value.Args[0]
 			auxConstant := auxIntToInt32(value.AuxInt)
 			value.reset(OpARM64CMPW)
 			constantValue := block.Func.constVal(OpARM64MOVDconst, typ.UInt64, int64(auxConstant), true)
 			value.AddArg2(arg0, constantValue)
 		case OpARM64CMNWconst:
+			arg0 := value.Args[0]
 			auxConstant := auxIntToInt32(value.AuxInt)
 			value.reset(OpARM64CMNW)
 			constantValue := block.Func.constVal(OpARM64MOVDconst, typ.UInt64, int64(auxConstant), true)
