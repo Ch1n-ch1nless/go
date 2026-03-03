@@ -868,6 +868,8 @@ var optab = []Optab{
 	{AMSR, C_VCON, C_NONE, C_NONE, C_SPOP, C_NONE, 37, 4, 0, 0, 0},
 	{APRFM, C_UOREG32K, C_NONE, C_NONE, C_SPOP, C_NONE, 91, 4, 0, 0, 0},
 	{APRFM, C_UOREG32K, C_NONE, C_NONE, C_LCON, C_NONE, 91, 4, 0, 0, 0},
+	{ARPRFM, C_ZOREG, C_REG, C_NONE, C_SPOP, C_NONE, 109, 4, 0, 0, 0},
+	{ARPRFM, C_ZOREG, C_REG, C_NONE, C_LCON, C_NONE, 109, 4, 0, 0, 0},
 	{ADMB, C_VCON, C_NONE, C_NONE, C_NONE, C_NONE, 51, 4, 0, 0, 0},
 	{AHINT, C_VCON, C_NONE, C_NONE, C_NONE, C_NONE, 52, 4, 0, 0, 0},
 	{ASYS, C_VCON, C_NONE, C_NONE, C_NONE, C_NONE, 50, 4, 0, 0, 0},
@@ -1051,6 +1053,13 @@ var sysInstFields = map[SpecialOperand]struct {
 	SPOP_CIGDVAC: {3, 7, 14, 5, true},
 	SPOP_CVAP:    {3, 7, 12, 1, true},
 	SPOP_CVADP:   {3, 7, 13, 1, true},
+}
+
+var rprfopfield = map[SpecialOperand]uint32{
+	SPOP_PLDKEEP: 0,
+	SPOP_PSTKEEP: 1,
+	SPOP_PLDSTRM: 4,
+	SPOP_PSTSTRM: 5,
 }
 
 // Used for padding NOOP instruction
@@ -3263,6 +3272,7 @@ func buildop(ctxt *obj.Link) {
 			AVDUP,
 			AVMOVI,
 			APRFM,
+			ARPRFM,
 			AVEXT,
 			AVXAR:
 			break
@@ -5808,6 +5818,44 @@ func (c *ctxt7) asmout(p *obj.Prog, out []uint32) (count int) {
 			c.ctxt.Diag("illegal argument: %v\n", p)
 			break
 		}
+
+	case 109: /* rprfm (Rn), Rm, <rprfop|$imm6> */
+		rn := p.From.Reg // Rn - register with base address
+		rm := p.Reg      // Rm - register with prefetch metadata
+		var operation uint32
+
+		// Operation is either a 6-bit immediate or a named prefetch op
+		if p.To.Type == obj.TYPE_CONST {
+			operation = uint32(p.To.Offset)
+			if operation > 63 {
+				c.ctxt.Diag("range prefetch immediate not in the range 0 to 63: %v", p)
+			}
+		} else {
+			var ok bool
+			operation, ok = rprfopfield[SpecialOperand(p.To.Offset)]
+			if !ok {
+				c.ctxt.Diag("illegal range prefetch operand, expected PLDKEEP, PSTKEEP, PLDSTRM or PSTSTRM: %v", p)
+			}
+		}
+
+		// Bit placement: the 6-bit value is scattered to match the
+		// architectural encoding (bits 15,13,12,2-0). This is because the
+		// instruction word reuses fields from base load/store hint space.
+		//	option2 (bit5) -> bit15
+		// 	option0 (bit4) -> bit13
+		//	S		(bit3) -> bit12
+		//	Rt<2:0>	(bits2-0) -> bits2-0
+		// Rt<4:3> are already set by c.opirr() and are fixed for RPRFM.
+		option2 := (operation & 32) << 10
+		option0 := (operation & 16) << 9
+		s := (operation & 8) << 9
+		rt := operation & 7
+
+		encodedOperation := option2 | option0 | s | rt
+
+		o1 = c.opirr(p, p.As)
+		o1 |= (uint32(rm&31) << 16) | (uint32(rn&31) << 5) | encodedOperation
+
 	}
 	out[0] = o1
 	out[1] = o2
@@ -6726,6 +6774,9 @@ func (c *ctxt7) opirr(p *obj.Prog, a obj.As) uint32 {
 
 	case APRFM:
 		return 0xf9<<24 | 2<<22
+
+	case ARPRFM:
+		return 0xf8<<24 | 5<<21 | 18<<10 | 3<<3
 	}
 
 	c.ctxt.Diag("%v: bad irr %v", p, a)

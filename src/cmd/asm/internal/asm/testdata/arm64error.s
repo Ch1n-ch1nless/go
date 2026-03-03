@@ -429,4 +429,8 @@ TEXT errors(SB),$0
 	AUTIA1716	$45                                      // ERROR "illegal combination"
 	AUTIB1716	R0                                       // ERROR "illegal combination"
 	SB	$1                                               // ERROR "illegal combination"
+	RPRFM	(R1), RSP, PLDKEEP							 // ERROR "illegal combination"
+	RPRFM	2(RSP), R4, PSTSTRM							 // ERROR "illegal combination"
+	RPRFM 	(R2), R3, $100								 // ERROR "range prefetch immediate not in the range 0 to 63"
+	RPRFM	(R5), R6, PLDL1KEEP							 // ERROR "illegal range prefetch operand"
 	RET
