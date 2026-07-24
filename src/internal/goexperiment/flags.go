@@ -130,4 +130,8 @@ type Flags struct {
 	// from interleaved key/elem slots (KVKVKVKV) to split key and elem
 	// arrays (KKKKVVVV).
 	MapSplitGroup bool
+
+	// MakeSliceCopyExt expands the number of patterns
+	// for the makeslicecopy function generation
+	MakeSliceCopyExt bool ``
 }
