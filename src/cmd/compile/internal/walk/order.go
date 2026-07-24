@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"go/constant"
 	"internal/abi"
+	"internal/goexperiment"
 
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
@@ -424,6 +425,32 @@ func (o *orderState) stmtList(l ir.Nodes) {
 	}
 }
 
+func uniqueVariable(n ir.Node) *ir.Name {
+	if n.Op() != ir.ONAME {
+		return nil
+	}
+	v := n.(*ir.Name)
+	if v.Addrtaken() {
+		return nil
+	}
+	return v
+}
+
+func usesName(root ir.Node, v *ir.Name) bool {
+	found := false
+	ir.Any(root, func(n ir.Node) bool {
+		if found || n == nil {
+			return found
+		}
+		if n.Op() == ir.ONAME && n.(*ir.Name) == v {
+			found = true
+			return true
+		}
+		return false
+	})
+	return found
+}
+
 // orderMakeSliceCopy matches the pattern:
 //
 //	m = OMAKESLICE([]T, x); OCOPY(m, s)
@@ -441,6 +468,41 @@ func orderMakeSliceCopy(s []ir.Node) {
 
 	as := s[0].(*ir.AssignStmt)
 	cp := s[1].(*ir.BinaryExpr)
+
+	if goexperiment.MakeSliceCopyExt {
+		if as.Y == nil || as.Y.Op() != ir.OMAKESLICE || ir.IsBlank(as.X) ||
+			!ir.SameSafeExpr(as.X, cp.X) || ir.SameSafeExpr(cp.X, cp.Y) {
+			return
+		}
+
+		safe := false
+
+		if dst := uniqueVariable(as.X); dst != nil {
+			safe = !usesName(cp.Y, dst)
+		}
+		if !safe {
+			if src := uniqueVariable(cp.Y); src != nil {
+				safe = !usesName(as.X, src)
+			}
+		}
+		if !safe {
+			return
+		}
+
+		mk := as.Y.(*ir.MakeExpr)
+		if mk.Esc() == ir.EscNone || mk.Len == nil || mk.Cap != nil {
+			return
+		}
+		mk.SetOp(ir.OMAKESLICECOPY)
+		mk.Cap = cp.Y
+		// Set bounded when m = OMAKESLICE([]T, len(s)); OCOPY(m, s)
+		mk.SetBounded(mk.Len.Op() == ir.OLEN && ir.SameSafeExpr(mk.Len.(*ir.UnaryExpr).X, cp.Y))
+		as.Y = typecheck.Expr(mk)
+		s[1] = nil // remove separate copy call
+
+		return
+	}
+
 	if as.Y == nil || as.Y.Op() != ir.OMAKESLICE || ir.IsBlank(as.X) ||
 		as.X.Op() != ir.ONAME || cp.X.Op() != ir.ONAME || cp.Y.Op() != ir.ONAME ||
 		as.X.Name() != cp.X.Name() || cp.X.Name() == cp.Y.Name() {

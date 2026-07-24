@@ -192,22 +192,20 @@ func SliceMakeCopyConstPtr(s []*int) []*int {
 
 func SliceMakeCopyNoOptNoDeref(s []*int) []*int {
 	a := new([]*int)
-	// amd64:-`.*runtime\.makeslicecopy`
-	// amd64:`.*runtime\.makeslice\(`
+	// amd64:`.*runtime\.makeslicecopy`
+	// amd64:-`.*runtime\.makeslice\(`
+	// amd64:-`.*runtime\.typedslicecopy`
 	*a = make([]*int, 4)
-	// amd64:-`.*runtime\.makeslicecopy`
-	// amd64:`.*runtime\.typedslicecopy`
 	copy(*a, s)
 	return *a
 }
 
 func SliceMakeCopyNoOptNoVar(s []*int) []*int {
 	a := make([][]*int, 1)
-	// amd64:-`.*runtime\.makeslicecopy`
-	// amd64:`.*runtime\.makeslice\(`
+	// amd64:`.*runtime\.makeslicecopy`
+	// amd64:-`.*runtime\.makeslice\(`
+	// amd64:-`.*runtime\.typedslicecopy`
 	a[0] = make([]*int, 4)
-	// amd64:-`.*runtime\.makeslicecopy`
-	// amd64:`.*runtime\.typedslicecopy`
 	copy(a[0], s)
 	return a[0]
 }
@@ -338,7 +336,9 @@ func SliceMakeEmptyPointerToZerobase() []int {
 }
 
 // ---------------------- //
-//   Nil check of &s[0]   //
+//
+//	Nil check of &s[0]   //
+//
 // ---------------------- //
 // See issue 30366
 func SliceNilCheck(s []int) {
@@ -348,7 +348,9 @@ func SliceNilCheck(s []int) {
 }
 
 // ---------------------- //
-//   Init slice literal   //
+//
+//	Init slice literal   //
+//
 // ---------------------- //
 // See issue 21561
 func InitSmallSliceLiteral() []int {
