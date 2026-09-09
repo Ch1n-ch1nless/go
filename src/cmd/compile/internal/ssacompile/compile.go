@@ -444,6 +444,7 @@ var passes = [...]ssa.Pass{
 	{Name: "dse", Fn: dse},
 	{Name: "memcombine", Fn: memcombine},
 	{Name: "writebarrier", Fn: writebarrier, Required: true}, // expand write barrier ops
+	{Name: "makeslicecopy", Fn: makeslicecopyElim},
 	{Name: "insert resched checks", Fn: insertLoopReschedChecks,
 		Disabled: !buildcfg.Experiment.PreemptibleLoops}, // insert resched checks in loops.
 	{Name: "cpufeatures", Fn: cpufeatures, Required: buildcfg.Experiment.SIMD, Disabled: !buildcfg.Experiment.SIMD},
