@@ -436,7 +436,7 @@ func readmemstats_m(stats *MemStats) {
 	totalMapped := gcController.heapInUse.load() + gcController.heapFree.load() + gcController.heapReleased.load() +
 		memstats.stacks_sys.load() + memstats.mspan_sys.load() + memstats.mcache_sys.load() +
 		memstats.buckhash_sys.load() + memstats.gcMiscSys.load() + memstats.other_sys.load() +
-		stackInUse + gcWorkBufInUse + gcProgPtrScalarBitsInUse
+		stackInUse + gcWorkBufInUse + gcProgPtrScalarBitsInUse + uint64(consStats.inGABs)
 
 	heapGoal := gcController.heapGoal()
 
@@ -450,7 +450,7 @@ func readmemstats_m(stats *MemStats) {
 		//
 		// * memstats.heapInUse == inHeap
 		// * memstats.heapReleased == released
-		// * memstats.heapInUse + memstats.heapFree == committed - inStacks - inWorkBufs - inPtrScalarBits
+		// * memstats.heapInUse + memstats.heapFree == committed - inStacks - inWorkBufs - -inGABS - inPtrScalarBits
 		// * memstats.totalAlloc == totalAlloc
 		// * memstats.totalFree == totalFree
 		//
@@ -471,7 +471,7 @@ func readmemstats_m(stats *MemStats) {
 			throw("heapReleased and consistent stats are not equal")
 		}
 		heapRetained := gcController.heapInUse.load() + gcController.heapFree.load()
-		consRetained := uint64(consStats.committed - consStats.inStacks - consStats.inWorkBufs - consStats.inPtrScalarBits)
+		consRetained := uint64(consStats.committed - consStats.inStacks - consStats.inWorkBufs - consStats.inGABs - consStats.inPtrScalarBits)
 		if heapRetained != consRetained {
 			print("runtime: global value=", heapRetained, "\n")
 			print("runtime: consistent value=", consRetained, "\n")
@@ -509,7 +509,7 @@ func readmemstats_m(stats *MemStats) {
 	stats.Mallocs = nMalloc
 	stats.Frees = nFree
 	stats.HeapAlloc = totalAlloc - totalFree
-	stats.HeapSys = gcController.heapInUse.load() + gcController.heapFree.load() + gcController.heapReleased.load()
+	stats.HeapSys = gcController.heapInUse.load() + gcController.heapFree.load() + gcController.heapReleased.load() + uint64(consStats.inGABs)
 	// By definition, HeapIdle is memory that was mapped
 	// for the heap but is not currently used to hold heap
 	// objects. It also specifically is memory that can be
@@ -527,7 +527,7 @@ func readmemstats_m(stats *MemStats) {
 	//
 	// => HeapIdle = HeapSys - heapInUse = heapFree + heapReleased
 	stats.HeapIdle = gcController.heapFree.load() + gcController.heapReleased.load()
-	stats.HeapInuse = gcController.heapInUse.load()
+	stats.HeapInuse = gcController.heapInUse.load() + uint64(consStats.inGABs)
 	stats.HeapReleased = gcController.heapReleased.load()
 	stats.HeapObjects = nMalloc - nFree
 	stats.StackInuse = stackInUse
@@ -673,6 +673,7 @@ type heapStatsDelta struct {
 	inStacks        int64 // byte delta of memory reserved for stacks
 	inWorkBufs      int64 // byte delta of memory reserved for work bufs
 	inPtrScalarBits int64 // byte delta of memory reserved for unrolled GC prog bits
+	inGABs          int64 // byte delta of memory reserved for GABs (Goroutine Allocation Buffers)
 
 	// Allocator stats.
 	//
@@ -699,6 +700,7 @@ func (a *heapStatsDelta) merge(b *heapStatsDelta) {
 	a.inStacks += b.inStacks
 	a.inWorkBufs += b.inWorkBufs
 	a.inPtrScalarBits += b.inPtrScalarBits
+	a.inGABs += b.inGABs
 
 	a.tinyAllocCount += b.tinyAllocCount
 	a.largeAlloc += b.largeAlloc

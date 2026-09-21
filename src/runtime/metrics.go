@@ -332,7 +332,7 @@ func initMetrics() {
 			compute: func(in *statAggregate, out *metricValue) {
 				out.kind = metricKindUint64
 				out.scalar = uint64(in.heapStats.committed - in.heapStats.inHeap -
-					in.heapStats.inStacks - in.heapStats.inWorkBufs -
+					in.heapStats.inStacks - in.heapStats.inWorkBufs - in.heapStats.inGABs -
 					in.heapStats.inPtrScalarBits)
 			},
 		},

@@ -453,6 +453,9 @@ func SetFinalizer(obj any, finalizer any) {
 		// (and we don't have the data structures to record them).
 		return
 	}
+	if inGab(uintptr(e.data)) {
+		return
+	}
 
 	// find the containing object
 	base, span, _ := findObject(uintptr(e.data), 0, 0)

@@ -943,6 +943,7 @@ const (
 	spanAllocStack                              // stack span
 	spanAllocPtrScalarBits                      // unrolled GC prog bitmap span
 	spanAllocWorkBuf                            // work buf span
+	spanAllocGAB                                // span in GAB (Goroutine Allocation Buffer)
 )
 
 // manual returns true if the span allocation is manually managed.
@@ -1371,6 +1372,8 @@ HaveSpan:
 		atomic.Xaddint64(&stats.inPtrScalarBits, int64(nbytes))
 	case spanAllocWorkBuf:
 		atomic.Xaddint64(&stats.inWorkBufs, int64(nbytes))
+	case spanAllocGAB:
+		atomic.Xaddint64(&stats.inGABs, int64(nbytes))
 	}
 	memstats.heapStats.release()
 
@@ -1662,6 +1665,8 @@ func (h *mheap) freeSpanLocked(s *mspan, typ spanAllocType) {
 		atomic.Xaddint64(&stats.inPtrScalarBits, -int64(nbytes))
 	case spanAllocWorkBuf:
 		atomic.Xaddint64(&stats.inWorkBufs, -int64(nbytes))
+	case spanAllocGAB:
+		atomic.Xaddint64(&stats.inGABs, -int64(nbytes))
 	}
 	memstats.heapStats.release()
 
