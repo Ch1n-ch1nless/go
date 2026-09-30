@@ -8,7 +8,6 @@ import (
 	"cmd/compile/internal/abi"
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/ssa"
-	"cmd/compile/internal/ssa/block"
 	"cmd/compile/internal/ssa/ssaop"
 	"cmd/compile/internal/types"
 )
@@ -43,6 +42,9 @@ func makeslicecopyElim(f *ssa.Func) {
 			if ac.Fn.Name == "runtime.memmove" {
 				if elimMemmoveCopy(f, b, v) {
 					changed = true
+					// elimMemmoveCopy changes the CFG. Dominance information
+					// must be recomputed before the next candidate is checked.
+					f.InvalidateCFG()
 				}
 				continue
 			}
@@ -233,6 +235,30 @@ func makeslicecopyElim(f *ssa.Func) {
 				}
 			}
 			if !safe {
+				continue
+			}
+
+			// The new call and the relocated header stores are created in b.
+			// Every operand that they capture must therefore dominate b.
+			if !valuesDominateBlock(f, b, typeArg, dstLen, srcLen, srcPtr, makeMem) {
+				continue
+			}
+			operandsDominate := true
+			for _, load := range sourceLoads {
+				if load == nil || load.MemoryArg() == nil ||
+					!valueDominatesBlock(f, load.MemoryArg(), load.Block) {
+					operandsDominate = false
+					break
+				}
+			}
+			for _, store := range headerStores {
+				if len(store.Args) < 2 ||
+					!valuesDominateBlock(f, b, store.Args[0], store.Args[1]) {
+					operandsDominate = false
+					break
+				}
+			}
+			if !operandsDominate {
 				continue
 			}
 
@@ -436,463 +462,12 @@ func makeslicecopyElim(f *ssa.Func) {
 // The whole pattern is then replaced by a single runtime.makeslicecopy call,
 // mirroring the typedslicecopy case.
 func elimMemmoveCopy(f *ssa.Func, b *ssa.Block, v *ssa.Value) bool {
-	// runtime.memmove has:
-	//
-	//   0: dst pointer
-	//   1: src pointer
-	//   2: size
-	//   last: memory
-	if len(v.Args) < 4 {
-		return false
-	}
-	dstPtr := v.Args[0]
-	srcPtr := v.Args[1]
-	sizeArg := v.Args[2]
-	copyMem := v.Args[len(v.Args)-1]
-
-	if dstPtr == nil || srcPtr == nil || sizeArg == nil || copyMem == nil {
-		return false
-	}
-
-	// The destination must be a fresh allocation produced directly by
-	// runtime.makeslice with len == cap.
-	makeCall := findMakesliceCallFromPtr(dstPtr)
-	if makeCall == nil || len(makeCall.Args) < 4 {
-		return false
-	}
-	if makeCall.Args[1] != makeCall.Args[2] {
-		return false
-	}
-	typeArg := makeCall.Args[0]
-	dstLen := makeCall.Args[1]
-
-	makeMem := makeCall.Args[len(makeCall.Args)-1]
-	if makeMem == nil || !makeMem.Type.IsMemory() {
-		return false
-	}
-	makeResultMem := findCallMemoryResult(makeCall)
-	if makeResultMem == nil {
-		return false
-	}
-
-	// The size copied by memmove is n*sizeof(T) where n = min(len(to),
-	// len(from)) is produced by a Phi feeding a shift by log2(sizeof(T)).
-	// Recover len(from) from that Phi: runtime.makeslicecopy clamps the
-	// copied length internally, so passing len(from) directly lets the min
-	// computation die with the memmove call.
-	if sizeArg.Op != ssaop.OpLsh64x64 || len(sizeArg.Args) != 2 {
-		return false
-	}
-	shift := sizeArg.Args[1]
-	if shift.Op != ssaop.OpConst64 {
-		return false
-	}
-	elemSize := int64(0)
-	if srcPtr.Type != nil && srcPtr.Type.IsPtr() {
-		elemSize = srcPtr.Type.Elem().Size()
-	}
-	if elemSize <= 0 || int64(1)<<shift.AuxInt != elemSize {
-		return false
-	}
-	count := sizeArg.Args[0]
-	srcLen := (*ssa.Value)(nil)
-	switch count.Op {
-	case ssaop.OpPhi:
-		if len(count.Args) != 2 {
-			return false
-		}
-		seenDstLen := false
-		for _, arg := range count.Args {
-			if arg == dstLen {
-				seenDstLen = true
-				continue
-			}
-			srcLen = arg
-		}
-		if !seenDstLen || srcLen == nil {
-			return false
-		}
-	case ssaop.OpCondSelect:
-		// The frontend can lower min(len(to), len(from)) either as a Phi
-		// or as a CondSelect. Handle both forms. CondSelect has:
-		//
-		//   cond = Less64(srcLen, dstLen)
-		//   count = CondSelect(srcLen, dstLen, cond)
-		//
-		// i.e. count = cond ? srcLen : dstLen.
-		if len(count.Args) != 3 {
-			return false
-		}
-		trueVal := count.Args[0]
-		falseVal := count.Args[1]
-		cond := count.Args[2]
-		if cond.Op != ssaop.OpLess64 || len(cond.Args) != 2 {
-			return false
-		}
-		if trueVal == dstLen && falseVal == dstLen {
-			return false
-		}
-		if trueVal != dstLen && falseVal == dstLen {
-			if (cond.Args[0] == trueVal && cond.Args[1] == dstLen) ||
-				(cond.Args[0] == dstLen && cond.Args[1] == trueVal) {
-				srcLen = trueVal
-			}
-		} else if trueVal == dstLen && falseVal != dstLen {
-			// cond ? dstLen : srcLen -- inverted, reject.
-			return false
-		}
-		if srcLen == nil {
-			return false
-		}
-	default:
-		return false
-	}
-
-	// The memmove call must live in its own block that is entered from a
-	// guard block via If to.ptr != from.ptr, and must merge back into a
-	// block containing a memory Phi.
-	copyBlock := v.Block
-	if copyBlock.Kind != block.BlockPlain || len(copyBlock.Succs) != 1 || len(copyBlock.Preds) != 1 {
-		return false
-	}
-	mergeBlock := copyBlock.Succs[0].B
-	guardBlock := copyBlock.Preds[0].B
-	if guardBlock.Kind != block.BlockIf || len(guardBlock.Succs) != 2 {
-		return false
-	}
-	guard := guardBlock.Controls[0]
-	if guard == nil || guard.Op != ssaop.OpNeqPtr || len(guard.Args) != 2 {
-		return false
-	}
-	if !((guard.Args[0] == dstPtr && guard.Args[1] == srcPtr) ||
-		(guard.Args[0] == srcPtr && guard.Args[1] == dstPtr)) {
-		return false
-	}
-	hasCopy, hasMerge := false, false
-	for _, e := range guardBlock.Succs {
-		if e.B == copyBlock {
-			hasCopy = true
-		}
-		if e.B == mergeBlock {
-			hasMerge = true
-		}
-	}
-	if !hasCopy || !hasMerge {
-		return false
-	}
-
-	// Find the memory result of memmove; it must feed only the memory Phi
-	// in the merge block.
-	var memResult *ssa.Value
-	for _, b2 := range f.Blocks {
-		for _, u := range b2.Values {
-			if u.Op != ssaop.OpSelectN || len(u.Args) != 1 || u.Args[0] != v || !u.Type.IsMemory() {
-				continue
-			}
-			if memResult != nil {
-				return false
-			}
-			memResult = u
-		}
-	}
-	if memResult == nil {
-		return false
-	}
-
-	var memPhi *ssa.Value
-	for _, u := range mergeBlock.Values {
-		if u.Op != ssaop.OpPhi {
-			continue
-		}
-		for _, arg := range u.Args {
-			if arg == memResult {
-				if memPhi != nil {
-					return false
-				}
-				memPhi = u
-			}
-		}
-	}
-	if memPhi == nil || len(memPhi.Args) != len(mergeBlock.Preds) {
-		return false
-	}
-	foundCopyMem := false
-	for _, arg := range memPhi.Args {
-		if arg == copyMem {
-			foundCopyMem = true
-		}
-	}
-	if !foundCopyMem {
-		return false
-	}
-	// memmove's memory result must have no uses other than the merge Phi.
-	for _, b2 := range f.Blocks {
-		for _, u := range b2.Values {
-			if u == memPhi {
-				continue
-			}
-			for _, arg := range u.Args {
-				if arg == memResult {
-					return false
-				}
-			}
-		}
-	}
-
-	// Find the destination-header stores between makeslice and memmove.
-	headerStores := collectHeaderStores(copyMem, makeResultMem)
-	if len(headerStores) == 0 {
-		return false
-	}
-
-	// dstPtr must be used only by memmove, by the (now dead) guard, and by
-	// exactly one of the destination-header stores.
-	var ptrStore *ssa.Value
-	ptrStoreCount := 0
-	safePtrUses := true
-	for _, ub := range f.Blocks {
-		for _, u := range ub.Values {
-			for i, arg := range u.Args {
-				if arg != dstPtr {
-					continue
-				}
-				if u == v {
-					if i != 0 {
-						safePtrUses = false
-					}
-					continue
-				}
-				if u == guard {
-					continue
-				}
-				if i == 1 && containsValue(headerStores, u) {
-					if u.Args[1] != dstPtr {
-						safePtrUses = false
-						continue
-					}
-					ptrStore = u
-					ptrStoreCount++
-					continue
-				}
-				safePtrUses = false
-			}
-		}
-	}
-	if !safePtrUses || ptrStoreCount != 1 || ptrStore == nil {
-		return false
-	}
-
-	// Validate the source loads exactly like the typedslicecopy case.
-	var sourceLoads []*ssa.Value
-	collectSourceLoads(srcPtr, &sourceLoads)
-	collectSourceLoads(srcLen, &sourceLoads)
-	sourceLoads = uniqueValues(sourceLoads)
-
-	safe := true
-	for _, load := range sourceLoads {
-		if load == nil || len(load.Args) == 0 || load.MemoryArg() == nil {
-			safe = false
-			break
-		}
-		loadAddr := load.Args[0]
-		loadSize := load.Type.Size()
-		for _, store := range headerStores {
-			if len(store.Args) == 0 || store.Args[0] == nil {
-				safe = false
-				break
-			}
-			if !disjointAddrs(loadAddr, loadSize, store.Args[0], storeTypeSize(store)) {
-				safe = false
-				break
-			}
-		}
-		if !safe {
-			break
-		}
-		if !memoryDependsOnlyOnStores(load.MemoryArg(), makeResultMem, headerStores) {
-			safe = false
-			break
-		}
-	}
-	if !safe {
-		return false
-	}
-
-	// The destination header must not be read outside the guard block, so
-	// that relocating the stores into the guard block is unobservable.
-	//
-	// A read of the destination header is only unsafe when it observes the
-	// header through a memory state that predates the header stores: after
-	// relocation such a read would be repointed to makeslice's argument
-	// memory and observe a stale header. A read whose memory depends on the
-	// merge Phi observes the final header and is repointed to the relocated
-	// store chain, which writes exactly the same values (the makeslicecopy
-	// pointer and the original len/cap), so it is safe.
-	dstHeaderBase := valueAddressBase(ptrStore.Args[0])
-	relocatable := true
-	for _, b2 := range f.Blocks {
-		for _, u := range b2.Values {
-			if u.Block == guardBlock || containsValue(headerStores, u) || containsValue(sourceLoads, u) {
-				continue
-			}
-			if !readsAddress(u, dstHeaderBase) {
-				continue
-			}
-			if !memoryDependsOn(u.MemoryArg(), memPhi) {
-				relocatable = false
-			}
-		}
-	}
-	if !relocatable {
-		return false
-	}
-
-	abiInfo := f.ABIDefault.ABIAnalyzeTypes(
-		[]*types.Type{
-			types.Types[types.TUNSAFEPTR],
-			types.Types[types.TINT],
-			types.Types[types.TINT],
-			types.Types[types.TUNSAFEPTR],
-		},
-		[]*types.Type{
-			types.Types[types.TUNSAFEPTR],
-		},
-	)
-
-	// Emit the makeslicecopy call in the guard block, where both the source
-	// loads (defined in the entry block) and the memory merge dominate.
-	call := guardBlock.NewValue0A(
-		v.Pos,
-		ssaop.OpStaticCall,
-		types.NewResults(append(abi.RegisterTypes(abiInfo.OutParams()), types.TypeMem)),
-		ssa.StaticAuxCall(ir.Syms.Makeslicecopy, abiInfo),
-	)
-	call.AddArg(typeArg)
-	call.AddArg(dstLen)
-	call.AddArg(srcLen)
-	call.AddArg(srcPtr)
-	call.AddArg(makeMem)
-
-	newPtr := guardBlock.NewValue1I(
-		v.Pos,
-		ssaop.OpSelectN,
-		types.Types[types.TUNSAFEPTR],
-		0,
-		call,
-	)
-
-	newMem := guardBlock.NewValue1I(
-		v.Pos,
-		ssaop.OpSelectN,
-		types.TypeMem,
-		1,
-		call,
-	)
-
-	// Relocate the destination-header stores into the guard block, chained
-	// after the makeslicecopy memory result.
-	storeMem := newMem
-	lastStore := (*ssa.Value)(nil)
-	for i := len(headerStores) - 1; i >= 0; i-- {
-		old := headerStores[i]
-		val := old.Args[1]
-		if old == ptrStore {
-			val = newPtr
-		}
-		ns := guardBlock.NewValue3A(old.Pos, old.Op, types.TypeMem, old.Aux, old.Args[0], val, storeMem)
-		storeMem = ns
-		if i == 0 {
-			lastStore = ns
-		}
-	}
-
-	// Repoint every consumer of the old header-store memory.
-	for _, b2 := range f.Blocks {
-		for _, u := range b2.Values {
-			if containsValue(headerStores, u) || containsValue(sourceLoads, u) {
-				continue
-			}
-			for i, arg := range u.Args {
-				if arg == nil || !arg.Type.IsMemory() {
-					continue
-				}
-				if containsValue(headerStores, arg) {
-					if u.Block == guardBlock && readsAddress(u, dstHeaderBase) {
-						u.SetArg(i, lastStore)
-					} else {
-						u.SetArg(i, makeMem)
-					}
-				}
-			}
-		}
-	}
-
-	// Source loads no longer need to wait for destination-header
-	// initialization; evaluate them against makeslice's argument memory.
-	for _, load := range sourceLoads {
-		replaceMemoryArg(load, makeMem)
-	}
-
-	// Repoint remaining users of makeslice's memory result to makeslice's
-	// argument memory.
-	for _, b2 := range f.Blocks {
-		for _, u := range b2.Values {
-			if containsValue(headerStores, u) || containsValue(sourceLoads, u) {
-				continue
-			}
-			for i, arg := range u.Args {
-				if arg == makeResultMem {
-					u.SetArg(i, makeMem)
-				}
-			}
-		}
-	}
-
-	// The merge Phi is superseded by the relocated store chain.
-	for _, b2 := range f.Blocks {
-		for _, u := range b2.Values {
-			if u == memPhi {
-				continue
-			}
-			for i, arg := range u.Args {
-				if arg == memPhi {
-					u.SetArg(i, lastStore)
-				}
-			}
-		}
-	}
-
-	// Drop the guard: dstPtr is a fresh makeslice allocation, so it can
-	// never equal srcPtr and the copy always runs. The min branch is left
-	// to deadcode: its Phi dies with the memmove chain and the redundant
-	// comparison is harmless.
-	succIdx := -1
-	for i, e := range guardBlock.Succs {
-		if e.B == copyBlock {
-			succIdx = i
-			break
-		}
-	}
-	if succIdx < 0 {
-		return false
-	}
-	guardBlock.RemoveSucc(succIdx)
-	guardBlock.Kind = block.BlockPlain
-	guardBlock.ResetControls()
-	guardBlock.Likely = ssa.BranchUnknown
-
-	// memmove, makeslice and the original header stores are all superseded
-	// by the single makeslicecopy call. Invalidating them also removes,
-	// transitively, the min Phi and the memmove size computation. The merge
-	// Phi is left valid so that deadcode can update it when it removes the
-	// memmove block.
-	v.InvalidateRecursively()
-	makeCall.InvalidateRecursively()
-	for _, hs := range headerStores {
-		hs.InvalidateRecursively()
-	}
-
-	return true
+	// Deliberately disabled for now. This transformation rewrites the CFG,
+	// removes a pointer-equality guard, relocates stores, and rewrites a memory
+	// Phi. Keep it disabled until all-path memory and destination-observation
+	// proofs cover the complete CFG pattern. Missing an optimization is safer
+	// than miscompiling a program.
+	return false
 }
 
 // findMakesliceCallFromPtr finds the runtime.makeslice call which directly
@@ -997,6 +572,12 @@ func collectSourceLoads(v *ssa.Value, loads *[]*ssa.Value) {
 
 	if v.Op == ssaop.OpLoad {
 		*loads = append(*loads, v)
+		// The address of a load can itself depend on pointer loads. Those
+		// loads must be checked too: moving destination-header stores must
+		// not change a pointer used to form a source address.
+		if len(v.Args) > 0 {
+			collectSourceLoads(v.Args[0], loads)
+		}
 		return
 	}
 
@@ -1051,29 +632,54 @@ func memoryDependsOn(mem, target *ssa.Value) bool {
 		return false
 	}
 
-	seen := make(map[*ssa.Value]bool)
+	// This is a proof used before moving destination-header stores. Every
+	// incoming memory path must reach target. A Phi with one matching input
+	// and one unrelated input is not sufficient.
+	active := make(map[*ssa.Value]bool)
+	checked := make(map[*ssa.Value]bool)
 	var visit func(*ssa.Value) bool
 	visit = func(v *ssa.Value) bool {
-		if v == nil || seen[v] {
+		if v == nil {
 			return false
 		}
-		seen[v] = true
 		if v == target {
 			return true
 		}
+		if checked[v] {
+			return true
+		}
+		// A cycle that does not reach target on the current path is not a
+		// proof. In particular, don't let a loop Phi prove itself.
+		if active[v] {
+			return false
+		}
+		active[v] = true
+		defer delete(active, v)
+
 		if v.Op == ssaop.OpPhi {
+			foundMemoryArg := false
 			for _, a := range v.Args {
-				if a != nil && a.Type != nil && a.Type.IsMemory() && visit(a) {
-					return true
+				if a == nil || a.Type == nil || !a.Type.IsMemory() {
+					continue
+				}
+				foundMemoryArg = true
+				if !visit(a) {
+					return false
 				}
 			}
-			return false
+			if !foundMemoryArg {
+				return false
+			}
+			checked[v] = true
+			return true
 		}
+
 		m := v.MemoryArg()
-		if m == nil {
+		if m == nil || !visit(m) {
 			return false
 		}
-		return visit(m)
+		checked[v] = true
+		return true
 	}
 	return visit(mem)
 }
@@ -1159,49 +765,206 @@ func storeTypeSize(store *ssa.Value) int64 {
 	return store.Args[1].Type.Size()
 }
 
+// valueDominatesBlock reports whether v is available on every path to b.
+// A value defined in b itself is considered dominating because this pass only
+// inserts new values at the end of b.
+func valueDominatesBlock(f *ssa.Func, v *ssa.Value, b *ssa.Block) bool {
+	if f == nil || v == nil || v.Block == nil || b == nil {
+		return false
+	}
+	if v.Block == b {
+		return true
+	}
+
+	idom := f.Idom()
+	for cur := b; cur != nil; {
+		cur = idom[cur.ID]
+		if cur == v.Block {
+			return true
+		}
+	}
+	return false
+}
+
+// valuesDominateBlock reports whether every value is available at b.
+func valuesDominateBlock(f *ssa.Func, b *ssa.Block, values ...*ssa.Value) bool {
+	for _, v := range values {
+		if !valueDominatesBlock(f, v, b) {
+			return false
+		}
+	}
+	return true
+}
+
 // disjointAddrs reports whether the memory regions [addr1, addr1+n1) and
 // [addr2, addr2+n2) provably do not overlap.
 //
-// It first tries the shared ssa.Disjoint1 analysis. ssa.Disjoint1 cannot
-// reason about addresses whose value is loaded from memory (OpLoad), so when
-// it fails disjointAddrs falls back to a structural check: a region on the
-// current frame's stack can never be addressed through a pointer loaded from
-// memory or received as a function argument. Any pointer stored in memory or
-// passed in from the caller refers to the heap or the caller's own frame, not
-// to a local of the current frame.
+// Disjoint1 understands only a limited set of address forms. In particular,
+// it cannot prove disjointness when one address is derived from a pointer
+// loaded through an argument. We may extend that proof when the other address
+// is rooted in a fresh runtime.makeslice allocation: an object allocated by
+// this call cannot alias an object reachable from an incoming argument.
+//
+// The fallback is deliberately narrow. A load from a local stack slot is not
+// treated as input-derived, because that slot could contain a pointer to the
+// fresh allocation. Every load in an address expression must instead be
+// rooted in an incoming argument or a global address, and those load slots
+// must be disjoint from the fresh allocation being initialized.
 func disjointAddrs(addr1 *ssa.Value, n1 int64, addr2 *ssa.Value, n2 int64) bool {
+	if addr1 == nil || addr2 == nil || n1 < 0 || n2 < 0 {
+		return false
+	}
 	if ssa.Disjoint1(addr1, n1, addr2, n2) {
 		return true
 	}
 
-	base := func(ptr *ssa.Value) *ssa.Value {
-		for ptr.Op == ssaop.OpOffPtr {
-			ptr = ptr.Args[0]
-		}
-		if ssaop.OpcodeTable[ptr.Op].NilCheck {
-			ptr = ptr.Args[0]
-		}
-		return ptr
+	// Disjoint1 intentionally understands only a small set of address forms.
+	// A pointer loaded from memory reachable through an incoming argument can
+	// still be proven disjoint from a LocalAddr in the current stack frame.
+	//
+	// This fallback is deliberately asymmetric in its proof: one side must be
+	// a local stack address, and the other side must be derived from an
+	// incoming argument. Every load in the pointer derivation must itself read
+	// from argument-derived memory. Thus a store to the local stack object
+	// cannot change the loaded pointer chain.
+	if isLocalStackAddress(addr1) && addressLoadsStableAgainstLocalStack(addr2) {
+		return true
+	}
+	if isLocalStackAddress(addr2) && addressLoadsStableAgainstLocalStack(addr1) {
+		return true
+	}
+	return false
+}
+
+// isLocalStackAddress reports whether ptr is a LocalAddr rooted at SP.
+// Address arithmetic and nil checks are peeled first.
+func isLocalStackAddress(ptr *ssa.Value) bool {
+	base := addressBaseForDisjoint(ptr)
+	if base == nil || base.Op != ssaop.OpLocalAddr || len(base.Args) == 0 {
+		return false
+	}
+	return base.Args[0].Op == ssaop.OpSP
+}
+
+// addressLoadsStableAgainstLocalStack reports whether ptr is derived from an
+// incoming argument and every load used to form that pointer reads from
+// argument-derived memory. Such load slots cannot overlap a LocalAddr in the
+// current frame in ordinary safe Go code, so stores to that local object do
+// not invalidate the pointer derivation.
+//
+// Unknown operations and cycles fail closed. This proof is intentionally
+// narrower than general alias analysis; it does not treat arbitrary loaded
+// pointers or global memory as disjoint from stack locals.
+func addressLoadsStableAgainstLocalStack(ptr *ssa.Value) bool {
+	if !addressDerivedFromInput(ptr) {
+		return false
 	}
 
-	onCurrentFrame := func(ptr *ssa.Value) bool {
-		p := base(ptr)
-		if p == nil || len(p.Args) == 0 {
+	seen := make(map[*ssa.Value]bool)
+	var visit func(*ssa.Value) bool
+	visit = func(v *ssa.Value) bool {
+		if v == nil || seen[v] {
+			return v != nil
+		}
+		seen[v] = true
+
+		switch v.Op {
+		case ssaop.OpLoad:
+			if len(v.Args) < 2 || v.Args[0] == nil {
+				return false
+			}
+			// The loaded pointer's storage must be input-derived as well.
+			if !addressDerivedFromInput(v.Args[0]) {
+				return false
+			}
+			return visit(v.Args[0])
+		case ssaop.OpOffPtr, ssaop.OpPtrIndex:
+			if len(v.Args) == 0 {
+				return false
+			}
+			return visit(v.Args[0])
+		case ssaop.OpPhi:
+			if len(v.Args) == 0 {
+				return false
+			}
+			for _, arg := range v.Args {
+				if !visit(arg) {
+					return false
+				}
+			}
+			return true
+		default:
+			if ssaop.OpcodeTable[v.Op].NilCheck && len(v.Args) > 0 {
+				return visit(v.Args[0])
+			}
+			// The provenance checker already validates the terminal value.
+			return addressDerivedFromInput(v)
+		}
+	}
+	return visit(ptr)
+}
+
+// addressBaseForDisjoint peels address arithmetic and nil checks. It is kept
+// separate from valueAddressBase because it also handles pointer indexing.
+func addressBaseForDisjoint(ptr *ssa.Value) *ssa.Value {
+	for ptr != nil {
+		switch ptr.Op {
+		case ssaop.OpOffPtr, ssaop.OpPtrIndex:
+			if len(ptr.Args) == 0 {
+				return ptr
+			}
+			ptr = ptr.Args[0]
+		default:
+			if ssaop.OpcodeTable[ptr.Op].NilCheck && len(ptr.Args) > 0 {
+				ptr = ptr.Args[0]
+				continue
+			}
+			return ptr
+		}
+	}
+	return nil
+}
+
+// addressDerivedFromInput proves that a pointer expression ultimately comes
+// from an incoming argument or a global address. Loads are accepted only when
+// the address of the loaded pointer itself has that provenance. Local stack
+// slots and unknown operations fail closed.
+func addressDerivedFromInput(ptr *ssa.Value) bool {
+	active := make(map[*ssa.Value]bool)
+	var visit func(*ssa.Value) bool
+	visit = func(v *ssa.Value) bool {
+		if v == nil || active[v] {
 			return false
 		}
-		return (p.Op == ssaop.OpLocalAddr || p.Op == ssaop.OpAddr) && p.Args[0].Op == ssaop.OpSP
-	}
+		active[v] = true
+		defer delete(active, v)
 
-	notOnCurrentFrame := func(ptr *ssa.Value) bool {
-		p := base(ptr)
-		if p == nil {
+		switch v.Op {
+		case ssaop.OpArg, ssaop.OpArgIntReg, ssaop.OpAddr:
+			return true
+		case ssaop.OpOffPtr, ssaop.OpPtrIndex, ssaop.OpLoad:
+			if len(v.Args) == 0 {
+				return false
+			}
+			return visit(v.Args[0])
+		case ssaop.OpPhi:
+			if len(v.Args) == 0 {
+				return false
+			}
+			for _, arg := range v.Args {
+				if !visit(arg) {
+					return false
+				}
+			}
+			return true
+		default:
+			if ssaop.OpcodeTable[v.Op].NilCheck && len(v.Args) > 0 {
+				return visit(v.Args[0])
+			}
 			return false
 		}
-		return p.Op == ssaop.OpLoad || p.Op == ssaop.OpArg || p.Op == ssaop.OpArgIntReg
 	}
-
-	return (onCurrentFrame(addr1) && notOnCurrentFrame(addr2)) ||
-		(onCurrentFrame(addr2) && notOnCurrentFrame(addr1))
+	return visit(ptr)
 }
 
 // valueAddressBase returns the base pointer of an address value after
