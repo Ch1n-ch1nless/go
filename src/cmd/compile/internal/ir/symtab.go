@@ -37,6 +37,7 @@ type symsStruct struct {
 	MoveSliceNoCap            *obj.LSym
 	MoveSliceNoCapNoScan      *obj.LSym
 	InterfaceSwitch           *obj.LSym
+	Makeslicecopy             *obj.LSym
 	MallocGC                  *obj.LSym
 	MallocGCTiny              *obj.LSym
 	MallocGCSmallNoScan       [8]*obj.LSym

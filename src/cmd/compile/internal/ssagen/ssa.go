@@ -141,6 +141,7 @@ func InitConfig(config *ssa.Config) {
 	ir.Syms.MoveSliceNoCap = typecheck.LookupRuntimeFunc("moveSliceNoCap")
 	ir.Syms.MoveSliceNoCapNoScan = typecheck.LookupRuntimeFunc("moveSliceNoCapNoScan")
 	ir.Syms.InterfaceSwitch = typecheck.LookupRuntimeFunc("interfaceSwitch")
+	ir.Syms.Makeslicecopy = typecheck.LookupRuntimeFunc("makeslicecopy")
 	for i := 1; i < len(ir.Syms.MallocGCSmallNoScan); i++ {
 		ir.Syms.MallocGCSmallNoScan[i] = typecheck.LookupRuntimeFunc(fmt.Sprintf("mallocgcSmallNoScanSC%d", i))
 	}

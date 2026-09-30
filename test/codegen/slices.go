@@ -284,15 +284,13 @@ func SliceMakeCopyOptDstIndex(s []*int) []*int {
 	return h[0]
 }
 
-func SliceMakeCopyNoOptBothComplex(src *[][]*int) []*int {
+func SliceMakeCopyBothComplex(src *[][]*int) []*int {
 	dst := make([][]*int, 1)
 
-	// amd64:-`.*runtime\.makeslicecopy`
-	// amd64:`.*runtime\.makeslice\(`
+	// amd64:-`.*runtime\.makeslice\(`
 	dst[0] = make([]*int, len((*src)[0]))
-
-	// amd64:-`.*runtime\.makeslicecopy`
-	// amd64:`.*runtime\.typedslicecopy`
+	// amd64:`.*runtime\.makeslicecopy`
+	// amd64:-`.*runtime\.typedslicecopy`
 	copy(dst[0], (*src)[0])
 
 	return dst[0]
