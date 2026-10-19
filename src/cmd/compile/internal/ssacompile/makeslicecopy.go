@@ -139,9 +139,13 @@ func makeslicecopyElim(f *ssa.Func) {
 			}
 
 			// Find the stores between makeslice and typedslicecopy.
-			headerStores := collectHeaderStores(copyMem, makeResultMem)
-			if len(headerStores) == 0 {
-				continue
+			var headerStores []*ssa.Value
+			noHeaderStores := copyMem == makeResultMem
+			if !noHeaderStores {
+				headerStores = collectHeaderStores(copyMem, makeResultMem)
+				if len(headerStores) == 0 {
+					continue
+				}
 			}
 
 			// dstPtr must be used only to initialize the destination header
@@ -176,7 +180,14 @@ func makeslicecopyElim(f *ssa.Func) {
 					}
 				}
 			}
-			if !safePtrUses || ptrStoreCount != 1 || ptrStore == nil {
+			if !safePtrUses {
+				continue
+			}
+			if noHeaderStores {
+				if ptrStoreCount != 0 || ptrStore != nil {
+					continue
+				}
+			} else if ptrStoreCount != 1 || ptrStore == nil {
 				continue
 			}
 
@@ -223,13 +234,9 @@ func makeslicecopyElim(f *ssa.Func) {
 					break
 				}
 
-				dependsOnlyOnStores := memoryDependsOnlyOnStores(
-					load.MemoryArg(),
-					makeResultMem,
-					headerStores,
-				)
-
-				if !dependsOnlyOnStores {
+				loadMem := load.MemoryArg()
+				if !memoryDependsOnlyOnStores(loadMem, makeResultMem, headerStores) &&
+					memoryDependsOn(loadMem, makeResultMem) {
 					safe = false
 					break
 				}
@@ -286,18 +293,26 @@ func makeslicecopyElim(f *ssa.Func) {
 			// block to consume the makeslicecopy memory result and store
 			// the makeslicecopy pointer into the destination header.
 			//
-			// Relocation is only valid if nothing outside the destination
-			// block reads the destination header: such a read would observe
-			// the stores earlier than the original code does.
-			dstHeaderBase := valueAddressBase(ptrStore.Args[0])
+			// Relocation moves the destination-header stores into the block of
+			// typedslicecopy (b). This is only safe when every read of the
+			// destination header is dominated by b: such a read executes after
+			// the relocated stores and, because its memory chain reaches the
+			// copy's memory result, observes then through the rewritten memory
+			// graph. A read on path that does not reach b would observe the
+			// header before it was initialized, which the original program did
+			// not do, so such a read makes the transformation unsafe
+			var dstHeaderBase *ssa.Value
 			relocatable := true
-			for _, b2 := range f.Blocks {
-				for _, u := range b2.Values {
-					if u.Block == b || containsValue(headerStores, u) || containsValue(sourceLoads, u) {
-						continue
-					}
-					if readsAddress(u, dstHeaderBase) {
-						relocatable = false
+			if !noHeaderStores {
+				dstHeaderBase = valueAddressBase(ptrStore.Args[0])
+				for _, b2 := range f.Blocks {
+					for _, u := range b2.Values {
+						if u.Block == b || containsValue(headerStores, u) || containsValue(sourceLoads, u) {
+							continue
+						}
+						if readsAddress(u, dstHeaderBase) && !blockDominatesBlock(f, b, u.Block) {
+							relocatable = false
+						}
 					}
 				}
 			}
@@ -317,6 +332,7 @@ func makeslicecopyElim(f *ssa.Func) {
 				ssa.StaticAuxCall(ir.Syms.Makeslicecopy, abiInfo),
 			)
 
+			call.AuxInt = abiInfo.ArgWidth()
 			call.AddArg(typeArg)
 			call.AddArg(dstLen)
 			call.AddArg(srcLen)
@@ -380,7 +396,7 @@ func makeslicecopyElim(f *ssa.Func) {
 							continue
 						}
 						if containsValue(headerStores, arg) {
-							if u.Block == b && readsAddress(u, dstHeaderBase) {
+							if readsAddress(u, dstHeaderBase) && blockDominatesBlock(f, b, u.Block) {
 								u.SetArg(i, lastStore)
 							} else {
 								u.SetArg(i, makeMem)
@@ -396,7 +412,13 @@ func makeslicecopyElim(f *ssa.Func) {
 			// against makeslice's argument memory, before any part of the
 			// destination is written.
 			for _, load := range sourceLoads {
-				replaceMemoryArg(load, makeMem)
+				if load == nil || load.MemoryArg() == nil {
+					continue
+				}
+
+				if load.MemoryArg() == makeResultMem || memoryDependsOn(load.MemoryArg(), makeResultMem) {
+					replaceMemoryArg(load, makeMem)
+				}
 			}
 
 			// Repoint remaining users of the makeslice memory result to
@@ -419,8 +441,15 @@ func makeslicecopyElim(f *ssa.Func) {
 			}
 
 			// typedslicecopy is now redundant. Its memory result is
-			// superseded by the relocated header-store chain.
-			replaceMemoryResultUses(v, lastStore)
+			// superseded by the relocated header-store chain, or by the
+			// makeslicecopy memory result if there were no header stores
+			// to relocate (the common "m := make(); copy(m, s)" case where
+			// the destination header is already SSA values).
+			replacementMem := lastStore
+			if replacementMem == nil {
+				replacementMem = newMem
+			}
+			replaceMemoryResultUses(v, replacementMem)
 
 			// The original runtime.typedslicecopy and runtime.makeslice
 			// calls are both superseded by the single makeslicecopy call.
@@ -794,6 +823,26 @@ func valuesDominateBlock(f *ssa.Func, b *ssa.Block, values ...*ssa.Value) bool {
 		}
 	}
 	return true
+}
+
+// blockDominatesBlock reports whether b1 dominates b2.
+func blockDominatesBlock(f *ssa.Func, b1, b2 *ssa.Block) bool {
+	if f == nil || b1 == nil || b2 == nil {
+		return false
+	}
+
+	if b1 == b2 {
+		return true
+	}
+
+	idom := f.Idom()
+	for cur := b2; cur != nil; {
+		cur = idom[cur.ID]
+		if cur == b1 {
+			return true
+		}
+	}
+	return false
 }
 
 // disjointAddrs reports whether the memory regions [addr1, addr1+n1) and

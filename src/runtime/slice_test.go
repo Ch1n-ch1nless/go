@@ -158,6 +158,36 @@ func benchmarkComplexDst[T any](b *testing.B, typeName string, size int) {
 	})
 }
 
+// Benchmarks optimization when both are non-trivial expressions
+func benchmarkComplexBoth[T any](b *testing.B, typeName string, size int) {
+	var src = &sliceHolder[T]{}
+	(*src).data[0] = make([]T, size)
+
+	b.Run(typeName, func(b *testing.B) {
+		b.Run("mallocmove", func(b *testing.B) {
+			var dst = &sliceHolder[T]{}
+			for i := 0; i < b.N; i++ {
+				(*dst).data[0] = make([]T, len((*src).data[0]))
+				copy((*dst).data[0], (*src).data[0])
+			}
+		})
+		b.Run("makecopy", func(b *testing.B) {
+			var dst = &sliceHolder[T]{}
+			for i := 0; i < b.N; i++ {
+				(*dst).data[0] = make([]T, size)
+				copy((*dst).data[0], (*src).data[0])
+			}
+		})
+		b.Run("nilappend", func(b *testing.B) {
+			var dst = &sliceHolder[T]{}
+			for i := 0; i < b.N; i++ {
+				(*dst).data[0] = append([]T(nil), (*src).data[0]...)
+				_ = (*dst).data[0]
+			}
+		})
+	})
+}
+
 func BenchmarkMakeSliceCopyComplexExpressions(b *testing.B) {
 	const length = 32
 
@@ -171,6 +201,12 @@ func BenchmarkMakeSliceCopyComplexExpressions(b *testing.B) {
 		benchmarkComplexDst[byte](b, "Byte", 8*length)
 		benchmarkComplexDst[int](b, "Int", length)
 		benchmarkComplexDst[*byte](b, "Ptr", length)
+	})
+
+	b.Run("Both", func(b *testing.B) {
+		benchmarkComplexBoth[byte](b, "Byte", 8*length)
+		benchmarkComplexBoth[int](b, "Int", length)
+		benchmarkComplexBoth[*byte](b, "Ptr", length)
 	})
 }
 
